@@ -1,6 +1,6 @@
 import OpenAI from "openai";
-import type { Event, ExtractResponse } from "./types.js";
-import { SYSTEM_PROMPT, responseSchema } from "./prompt.js";
+import { runExtraction } from "./extract.js";
+import { ConfigError } from "./errors.js";
 
 const MINIMAX_BASE_URL =
   process.env.MINIMAX_BASE_URL ?? "https://api.minimax.io/v1";
@@ -8,48 +8,14 @@ const MINIMAX_BASE_URL =
 export async function extractEventsWithMiniMax(
   email: string,
   model: string,
-): Promise<ExtractResponse> {
+) {
   const apiKey = process.env.MINIMAX_API_KEY;
   if (!apiKey) {
-    throw new Error("MINIMAX_API_KEY is not configured");
+    throw new ConfigError("MINIMAX_API_KEY is not configured");
   }
 
   const client = new OpenAI({ apiKey, baseURL: MINIMAX_BASE_URL });
-  const today = new Date().toISOString().slice(0, 10);
-
-  type MiniMaxBody = Parameters<typeof client.chat.completions.create>[0] & {
-    extra_body?: Record<string, unknown>;
-  };
-
-  const completion = await client.chat.completions.create({
-    model,
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        name: "extract_events",
-        strict: true,
-        schema: responseSchema,
-      },
-    },
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      {
-        role: "user",
-        content: `Today's date is ${today}.\n\nEmail:\n"""\n${email}\n"""`,
-      },
-    ],
-    temperature: 0,
-    // MiniMax-specific: disable thinking so the response is clean JSON
-    // instead of being prefixed with <thinking>...</thinking> tags.
-    extra_body: { thinking: { type: "disabled" } },
-  } as MiniMaxBody);
-
-  const raw = (completion as OpenAI.Chat.ChatCompletion).choices[0]?.message
-    ?.content;
-  if (!raw) {
-    return { events: [] };
-  }
-
-  const parsed = JSON.parse(raw) as { events: Event[] };
-  return { events: Array.isArray(parsed.events) ? parsed.events : [] };
+  return runExtraction(client, model, email, {
+    thinking: { type: "disabled" },
+  });
 }

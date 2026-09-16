@@ -11,7 +11,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": ["@vercel/node"]
+    "types": ["@vercel/node", "vitest/globals"]
   },
-  "include": ["api/**/*.ts", "lib/**/*.ts"]
+  "include": ["api/**/*.ts", "lib/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
 }

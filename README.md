@@ -26,8 +26,16 @@ endpoint.
 │   ├── router.ts            # picks provider based on requested model
 │   ├── openai.ts            # OpenAI extraction (gpt-4o-mini)
 │   ├── minimax.ts           # MiniMax extraction (MiniMax-M3)
+│   ├── extract.ts           # shared chat-completion + JSON-parse helper
+│   ├── errors.ts            # ConfigError class
 │   ├── prompt.ts            # shared system prompt + JSON schema + model list
 │   └── types.ts             # Event / request / response types
+├── tests/
+│   ├── handler.test.ts      # 12 input-validation cases + error-wrapping tests
+│   ├── router.test.ts       # dispatch tests
+│   ├── providers.test.ts    # missing-key ConfigError tests
+│   └── extract.test.ts      # runExtraction helper tests
+├── vitest.config.ts
 ├── package.json
 ├── tsconfig.json
 ├── vercel.json
@@ -67,17 +75,32 @@ endpoint.
    vercel env add MINIMAX_API_KEY production    # for MiniMax-M3 requests
    ```
 
-2. (Optional) Override MiniMax base URL:
+2. (Required for this codebase) Set the bundling env var as a **plain config**
+   value, not a Secret — Secrets are hidden from the build step:
 
    ```bash
-   vercel env add MINIMAX_BASE_URL production   # default: https://api.minimax.io/v1
+   echo "1" | vercel env add VERCEL_API_FUNCTION_BUNDLING production --type config
    ```
 
-3. Deploy:
+3. (Optional) Override MiniMax base URL:
+
+   ```bash
+   echo "https://api.minimax.io/v1" | vercel env add MINIMAX_BASE_URL production
+   ```
+
+4. Deploy:
 
    ```bash
    vercel --prod
    ```
+
+> **Important — `package.json` has no `"type": "module"`.** Vercel's @vercel/node
+> bundler generates a single `___vc_bundled_api_handler.js` that mixes the
+> bundled-handler (which uses CommonJS `require`) with your code. Forcing the
+> package to ESM would crash that bundle with `require is not defined in ES
+> module scope`. The `VERCEL_API_FUNCTION_BUNDLING=1` config var above is also
+> required — without it, Vercel tries to ship your TS files separately and
+> Node ESM can't resolve the cross-file `.js` imports.
 
 ## Endpoint
 
@@ -194,6 +217,14 @@ curl -i -X POST https://<your-deployment>.vercel.app/api/extract-event \
 
 - `lib/router.ts` dispatches on `model`. Adding a new provider means adding a
   case there and a corresponding `lib/<provider>.ts` module.
+- The shared chat-completion + JSON-parse logic lives in `lib/extract.ts`,
+  which both providers call. Provider-specific differences (the MiniMax
+  `thinking: disabled` flag) are passed as an `extraBody` argument.
+- `lib/errors.ts` exports a `ConfigError` class. The handler distinguishes
+  `ConfigError` (passes the message through — these are deployment
+  configuration issues the caller should see) from any other error (logged
+  server-side via `console.error` and replaced with a generic
+  `"Extraction failed"` response so upstream details never leak).
 - Both providers share the system prompt and JSON schema in `lib/prompt.ts`,
   so output shape is identical regardless of which model is called.
 - Both use `response_format: { type: "json_schema", strict: true, ... }` so the
@@ -214,6 +245,19 @@ curl -i -X POST https://<your-deployment>.vercel.app/api/extract-event \
 npm run typecheck
 ```
 
+## Tests
+
+```bash
+npm test
+```
+
+27 unit tests covering the 12 validation cases from the API analysis,
+provider routing, the shared extraction helper (null content, malformed JSON,
+non-array events, `extra_body` propagation), and the error-wrapping behaviour
+(Fix 6) — `ConfigError` messages pass through; any other error is logged
+server-side and replaced with a generic `"Extraction failed"` response so
+upstream details never leak to the caller.
+
 ## Notes
 
 - `vercel.json` is intentionally empty. Vercel auto-detects `api/*.ts` as a
@@ -221,3 +265,7 @@ npm run typecheck
   explicitly can fail with "Function Runtimes must have a valid version" on
   some CLI versions. If you need to pin a runtime, add it back to
   `vercel.json`, e.g. `{ "functions": { "api/*.ts": { "runtime": "nodejs20.x" } } }`.
+- This service is server-to-server only (Outlook Actions / Power Automate /
+  arbitrary HTTP clients). It does not set CORS headers. If you ever need
+  browser callers, add an `Access-Control-Allow-Origin` header in the
+  handler.

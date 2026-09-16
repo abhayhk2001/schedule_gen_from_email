@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { extractEvents } from "../lib/router.js";
 import { isSupportedModel } from "../lib/prompt.js";
 import { SUPPORTED_MODELS } from "../lib/types.js";
+import { ConfigError } from "../lib/errors.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
@@ -9,9 +10,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: "Method Not Allowed" });
   }
 
-  const body = (typeof req.body === "object" && req.body !== null
-    ? req.body
-    : {}) as Record<string, unknown>;
+  const body =
+    typeof req.body === "object" && req.body !== null
+      ? (req.body as Record<string, unknown>)
+      : {};
 
   const email = body.email;
   const model = body.model;
@@ -32,7 +34,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const result = await extractEvents(email, model);
     return res.status(200).json(result);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return res.status(500).json({ error: message });
+    if (err instanceof ConfigError) {
+      return res.status(500).json({ error: err.message });
+    }
+    console.error("extract-event failed:", err);
+    return res.status(500).json({ error: "Extraction failed" });
   }
 }
