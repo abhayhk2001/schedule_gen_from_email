@@ -36,6 +36,14 @@ endpoint.
 │   ├── router.test.ts       # dispatch tests
 │   ├── providers.test.ts    # missing-key ConfigError tests
 │   └── extract.test.ts      # runExtraction helper tests
+├── public/
+│   └── outlook-addin/       # Outlook Add-in (static files served by Vercel)
+│       ├── manifest.xml
+│       ├── index.html
+│       ├── app.js
+│       ├── app.css
+│       └── assets/          # placeholder icons (16/32/64/80/128 px)
+├── run-tests.sh             # live regression battery (8 multi-day scenarios)
 ├── vitest.config.ts
 ├── package.json
 ├── tsconfig.json
@@ -312,3 +320,59 @@ the [Multi-day handling](#multi-day-handling) table.
   arbitrary HTTP clients). It does not set CORS headers. If you ever need
   browser callers, add an `Access-Control-Allow-Origin` header in the
   handler.
+
+## Outlook Add-in
+
+A small Outlook Add-in lives in `public/outlook-addin/` and is served as
+static files by the same Vercel project. It appears in the read pane of any
+message, reads the subject/sender/body via Office.js, posts to
+`/api/extract-event` (same-origin, so no CORS changes are needed), and
+renders the returned events.
+
+### Install (Outlook on the web)
+
+1. Open Outlook on the web (https://outlook.office.com or
+   https://outlook.live.com).
+2. **Settings** (gear icon) → **View all Outlook settings** → **Mail** →
+   **Customize actions** → **Manage add-ins** (or in newer Outlook:
+   **Settings** → **Integrations** → **Add-ins**).
+3. At the bottom of the add-ins list click **+ Add custom add-in** → **Add
+   from URL**.
+4. Paste:
+
+   ```
+   https://schedule-gen-from-email.vercel.app/outlook-addin/manifest.xml
+   ```
+
+5. Click **Install**, accept the permission prompt (`ReadItem`).
+6. Open any email — the **Event Extractor** button appears in the ribbon.
+   Click it; the add-in pane opens, fetches events from the API, and
+   displays them.
+
+### Install (Outlook desktop, Windows)
+
+1. **File** → **Manage Add-ins** (or **Get Add-ins** → **My add-ins**).
+2. Click **+ Add a custom add-in** → **Add from File…** (the on-the-web
+   flow only allows URL-based manifests in newer builds; for desktop you may
+   need to download `manifest.xml` to disk first).
+
+### Files
+
+| Path | Purpose |
+|------|---------|
+| `public/outlook-addin/manifest.xml` | Outlook Add-in manifest. Fixed GUID; bump `Version` when redeploying changes. |
+| `public/outlook-addin/index.html` | Task-pane UI. |
+| `public/outlook-addin/app.js` | Office.js + fetch logic. |
+| `public/outlook-addin/app.css` | Card styling. |
+| `public/outlook-addin/assets/` | PNG icons (16/32/64/80/128). Replace with your real logo. |
+
+### Limitations / next steps
+
+- **Display-only.** Future work: per-event "Add to Outlook Calendar" button
+  using `Office.context.mailbox.makeEwsRequestAsync` or the Mailbox REST
+  API.
+- **No auth on the API.** The add-in calls `/api/extract-event` directly;
+  anyone with the URL can use the backend. Fine for single-user use; add a
+  shared-secret header before exposing to others.
+- **No copy-to-clipboard.** Per your direction, events are rendered but not
+  copyable in this iteration.

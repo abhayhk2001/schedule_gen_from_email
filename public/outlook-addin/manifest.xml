@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xsi:type="MailApp">
+  <Id>9c2bf2d8-7a3e-4f11-b8d6-2e8f9b4c1a25</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>Email Event Extractor</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="Email Event Extractor"/>
+  <Description DefaultValue="Extract calendar events from the email you're viewing using AI."/>
+  <IconUrl DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-64.png"/>
+  <HighResolutionIconUrl DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-128.png"/>
+  <SupportUrl DefaultValue="https://schedule-gen-from-email.vercel.app/"/>
+  <AppDomains>
+    <AppDomain>https://schedule-gen-from-email.vercel.app</AppDomain>
+  </AppDomains>
+  <Permissions>ReadItem</Permissions>
+  <Rule xsi:type="RuleCollection" Mode="MessageRead">
+    <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read"/>
+  </Rule>
+  <FormFactor>
+    <Desktop>
+      <FunctionFile resid="functionFile"/>
+    </Desktop>
+  </FormFactor>
+  <Resources>
+    <bt:Images>
+      <bt:Image id="icon-16"  DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-16.png"/>
+      <bt:Image id="icon-32"  DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-32.png"/>
+      <bt:Image id="icon-64"  DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-64.png"/>
+      <bt:Image id="icon-80"  DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-80.png"/>
+      <bt:Image id="icon-128" DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-128.png"/>
+    </bt:Images>
+    <bt:Urls>
+      <bt:Url id="functionFile" DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/index.html"/>
+    </bt:Urls>
+  </Resources>
+</OfficeApp>
