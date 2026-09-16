@@ -5,9 +5,14 @@
   --border: #e5e7eb;
   --accent: #4f46e5;
   --accent-hover: #4338ca;
+  --accent-soft: #eef2ff;
   --error-bg: #fef2f2;
   --error-fg: #991b1b;
+  --success-fg: #047857;
+  --success-bg: #ecfdf5;
   --card-bg: #f9fafb;
+  --removed-bg: #f3f4f6;
+  --removed-fg: #9ca3af;
 }
 
 * {
@@ -44,6 +49,9 @@ body {
 
 main {
   padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 button.primary {
@@ -67,19 +75,31 @@ button.primary:disabled {
   cursor: not-allowed;
 }
 
+button.primary.create {
+  background: #047857;
+}
+
+button.primary.create:hover {
+  background: #065f46;
+}
+
+button.primary.create:disabled {
+  background: #a7f3d0;
+}
+
 .hidden {
   display: none !important;
 }
 
 .status {
-  margin-top: 12px;
+  margin-top: 4px;
   padding: 10px 12px;
   border-radius: 6px;
   font-size: 13px;
 }
 
 .status.loading {
-  background: #eef2ff;
+  background: var(--accent-soft);
   color: #3730a3;
 }
 
@@ -89,7 +109,7 @@ button.primary:disabled {
 }
 
 .results {
-  margin-top: 14px;
+  margin-top: 6px;
 }
 
 .results h2 {
@@ -108,6 +128,33 @@ button.primary:disabled {
   margin-bottom: 8px;
 }
 
+.event.removed {
+  background: var(--removed-bg);
+  color: var(--removed-fg);
+}
+
+.event.removed .event-body h3,
+.event.removed .event-body .when,
+.event.removed .event-body .desc {
+  text-decoration: line-through;
+}
+
+.event-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.event-row input[type="checkbox"] {
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+.event-body {
+  flex: 1;
+  min-width: 0;
+}
+
 .event h3 {
   margin: 0 0 4px;
   font-size: 14px;
@@ -118,6 +165,10 @@ button.primary:disabled {
   margin: 0 0 4px;
   font-size: 12px;
   color: #1f2937;
+}
+
+.event.removed .when {
+  color: var(--removed-fg);
 }
 
 .event .when .tz {
@@ -131,8 +182,91 @@ button.primary:disabled {
   color: var(--muted);
 }
 
+.remove-btn {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: white;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.remove-btn:hover {
+  background: var(--error-bg);
+  color: var(--error-fg);
+  border-color: var(--error-fg);
+}
+
+.event.result {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.result-marker {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.event.result.success .result-marker {
+  background: var(--success-bg);
+  color: var(--success-fg);
+}
+
+.event.result.error .result-marker {
+  background: var(--error-bg);
+  color: var(--error-fg);
+}
+
+.event.result .event-body a {
+  display: inline-block;
+  margin-top: 4px;
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.event.result .event-body a:hover {
+  text-decoration: underline;
+}
+
+.error-text {
+  margin: 4px 0 !important;
+  color: var(--error-fg) !important;
+  font-size: 12px !important;
+  word-break: break-word;
+}
+
+.retry-btn {
+  margin-top: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--error-fg);
+  border-radius: 4px;
+  background: white;
+  color: var(--error-fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.retry-btn:hover {
+  background: var(--error-bg);
+}
+
 .empty {
-  margin-top: 14px;
+  margin-top: 6px;
   padding: 14px;
   border: 1px dashed var(--border);
   border-radius: 8px;

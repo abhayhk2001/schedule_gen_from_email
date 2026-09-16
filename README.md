@@ -368,11 +368,50 @@ renders the returned events.
 
 ### Limitations / next steps
 
-- **Display-only.** Future work: per-event "Add to Outlook Calendar" button
-  using `Office.context.mailbox.makeEwsRequestAsync` or the Mailbox REST
-  API.
 - **No auth on the API.** The add-in calls `/api/extract-event` directly;
   anyone with the URL can use the backend. Fine for single-user use; add a
   shared-secret header before exposing to others.
 - **No copy-to-clipboard.** Per your direction, events are rendered but not
   copyable in this iteration.
+
+## Creating calendar events
+
+After the events render, each card has a checkbox + **× remove** button, and
+the footer shows a green **"Create N events in calendar"** button.
+
+### What gets sent to Graph
+
+For each non-removed event, the add-in calls `POST https://graph.microsoft.com/v1.0/me/events`
+with a Bearer token from `Office.context.mailbox.getCallbackTokenAsync({isRest: true})`.
+
+| API field | `whole_day` | Graph payload |
+|-----------|:-----------:|---------------|
+| All day | true | `start.dateTime = ev.date`, `end.dateTime = ev.end_date ?? ev.date + 1 day`, `isAllDay: true` |
+| Timed | false | `start.dateTime = "{date}T{time}:00"`, `end.dateTime = "{end_date ?? date}T{end_time ?? time+1h}:00"`, `isAllDay: false` |
+| Both | — | `timeZone = ev.timezone ?? "UTC"`, `subject = ev.event_name`, `body.content = ev.description` |
+
+### Fallback rules
+
+- Missing `end_time` on a timed event → end = start + 1 hour.
+- Missing `end_date` on a whole-day event → end = start + 1 day.
+- Missing `timezone` → defaults to `UTC`.
+
+### Multi-day handling
+
+For an email like *"Oct 10-20, 2026"* the API emits one entry per calendar
+day. The add-in shows all 11 rows; remove the ones you don't want before
+clicking **Create**. Each row becomes its own Outlook event.
+
+### Auth
+
+Uses the Outlook-provided callback token — no Azure App Registration, no
+manifest WebApplicationInfo, no admin consent. The token is scoped for
+`https://graph.microsoft.com` and pre-authorizes `Calendars.ReadWrite` for
+the signed-in user's own mailbox.
+
+### Error policy
+
+Failures are reported per event. A failed row stays in the list with its
+error message and a **Retry** button; successful rows show an **Open in
+Outlook** link to the newly created event. One failure does not block the
+others.
