@@ -17,6 +17,22 @@
   <AppDomains>
     <AppDomain>https://schedule-gen-from-email.vercel.app</AppDomain>
   </AppDomains>
+  <Hosts>
+    <Host Name="Mailbox"/>
+  </Hosts>
+  <Requirements>
+    <Sets>
+      <Set Name="Mailbox" MinVersion="1.3"/>
+    </Sets>
+  </Requirements>
+  <FormSettings>
+    <Form xsi:type="ItemRead">
+      <DesktopSettings>
+        <SourceLocation DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/index.html"/>
+        <RequestedHeight>400</RequestedHeight>
+      </DesktopSettings>
+    </Form>
+  </FormSettings>
   <Permissions>ReadItem</Permissions>
   <Rule xsi:type="RuleCollection" Mode="MessageRead">
     <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read"/>
