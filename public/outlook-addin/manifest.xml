@@ -3,9 +3,10 @@
   xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
   xsi:type="MailApp">
   <Id>9c2bf2d8-7a3e-4f11-b8d6-2e8f9b4c1a25</Id>
-  <Version>1.0.0.0</Version>
+  <Version>1.1.0.0</Version>
   <ProviderName>Email Event Extractor</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Email Event Extractor"/>
@@ -20,21 +21,71 @@
   <Rule xsi:type="RuleCollection" Mode="MessageRead">
     <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read"/>
   </Rule>
-  <FormFactor>
-    <Desktop>
-      <FunctionFile resid="functionFile"/>
-    </Desktop>
-  </FormFactor>
-  <Resources>
-    <bt:Images>
-      <bt:Image id="icon-16"  DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-16.png"/>
-      <bt:Image id="icon-32"  DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-32.png"/>
-      <bt:Image id="icon-64"  DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-64.png"/>
-      <bt:Image id="icon-80"  DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-80.png"/>
-      <bt:Image id="icon-128" DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-128.png"/>
-    </bt:Images>
-    <bt:Urls>
-      <bt:Url id="functionFile" DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/index.html"/>
-    </bt:Urls>
-  </Resources>
+
+  <VersionOverrides
+    xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
+    xsi:type="VersionOverridesV1_0">
+    <Description resid="longDescription"/>
+
+    <Requirements>
+      <bt:Sets DefaultMinVersion="1.3">
+        <bt:Set Name="Mailbox"/>
+      </bt:Sets>
+    </Requirements>
+
+    <Hosts>
+      <Host xsi:type="MailHost">
+        <DesktopFormFactor>
+          <ExtensionPoint xsi:type="MessageReadCommandSurface">
+            <OfficeTab id="TabDefault">
+              <Group id="eventExtractorGroup">
+                <Label resid="groupLabel"/>
+                <Icon>
+                  <bt:Image size="16" resid="icon-16"/>
+                  <bt:Image size="32" resid="icon-32"/>
+                  <bt:Image size="80" resid="icon-80"/>
+                </Icon>
+                <Control xsi:type="Button" id="eventExtractorButton">
+                  <Label resid="buttonLabel"/>
+                  <Supertip>
+                    <Title resid="buttonLabel"/>
+                    <Description resid="buttonTooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="icon-16"/>
+                    <bt:Image size="32" resid="icon-32"/>
+                    <bt:Image size="80" resid="icon-80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="taskpaneUrl"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+
+    <Resources>
+      <bt:Images>
+        <bt:Image id="icon-16"  DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-16.png"/>
+        <bt:Image id="icon-32"  DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-32.png"/>
+        <bt:Image id="icon-64"  DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-64.png"/>
+        <bt:Image id="icon-80"  DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-80.png"/>
+        <bt:Image id="icon-128" DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-128.png"/>
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="taskpaneUrl" DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/index.html"/>
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="groupLabel"   DefaultValue="Email Events"/>
+        <bt:String id="buttonLabel"  DefaultValue="Extract Events"/>
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="longDescription" DefaultValue="Extract calendar events from the email you're viewing using AI."/>
+        <bt:String id="buttonTooltip"    DefaultValue="Reads this email's subject, sender, and body, and extracts calendar events via the Email Event Extractor API."/>
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
 </OfficeApp>
