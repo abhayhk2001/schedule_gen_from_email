@@ -6,8 +6,12 @@ export interface Event {
   description: string | null;
 }
 
+export const SUPPORTED_MODELS = ["gpt-4o-mini", "MiniMax-M3"] as const;
+export type SupportedModel = (typeof SUPPORTED_MODELS)[number];
+
 export interface ExtractRequest {
   email: string;
+  model: SupportedModel;
 }
 
 export interface ExtractResponse {

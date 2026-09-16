@@ -2,24 +2,17 @@ import OpenAI from "openai";
 import type { Event, ExtractResponse } from "./types.js";
 import { SYSTEM_PROMPT, responseSchema } from "./prompt.js";
 
-const MINIMAX_BASE_URL =
-  process.env.MINIMAX_BASE_URL ?? "https://api.minimax.io/v1";
-
-export async function extractEventsWithMiniMax(
+export async function extractEventsWithOpenAI(
   email: string,
   model: string,
 ): Promise<ExtractResponse> {
-  const apiKey = process.env.MINIMAX_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    throw new Error("MINIMAX_API_KEY is not configured");
+    throw new Error("OPENAI_API_KEY is not configured");
   }
 
-  const client = new OpenAI({ apiKey, baseURL: MINIMAX_BASE_URL });
+  const client = new OpenAI({ apiKey });
   const today = new Date().toISOString().slice(0, 10);
-
-  type MiniMaxBody = Parameters<typeof client.chat.completions.create>[0] & {
-    extra_body?: Record<string, unknown>;
-  };
 
   const completion = await client.chat.completions.create({
     model,
@@ -39,13 +32,9 @@ export async function extractEventsWithMiniMax(
       },
     ],
     temperature: 0,
-    // MiniMax-specific: disable thinking so the response is clean JSON
-    // instead of being prefixed with <thinking>...</thinking> tags.
-    extra_body: { thinking: { type: "disabled" } },
-  } as MiniMaxBody);
+  });
 
-  const raw = (completion as OpenAI.Chat.ChatCompletion).choices[0]?.message
-    ?.content;
+  const raw = completion.choices[0]?.message?.content;
   if (!raw) {
     return { events: [] };
   }

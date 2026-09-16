@@ -1,9 +1,20 @@
 # schedule_gen_from_email
 
-A Vercel serverless function that takes the contents of an email and uses the
-MiniMax M3 model via its OpenAI-compatible API (with strict `json_schema`
-response format) to extract every calendar event mentioned — date, time, IANA
-timezone, event name, and a short description — and returns them as JSON.
+A Vercel serverless function that takes the contents of an email and uses an
+LLM to extract every calendar event mentioned — date, time, IANA timezone,
+event name, and a short description — and returns them as JSON. The caller
+chooses the LLM per request via a `model` field.
+
+Supported models:
+
+| `model`        | Provider | Key env var       |
+|----------------|----------|-------------------|
+| `gpt-4o-mini`  | OpenAI   | `OPENAI_API_KEY`  |
+| `MiniMax-M3`   | MiniMax  | `MINIMAX_API_KEY` |
+
+Both providers are reached through the official `openai` SDK with strict
+`json_schema` response format. MiniMax is reached via its OpenAI-compatible
+endpoint.
 
 ## Project layout
 
@@ -12,7 +23,10 @@ timezone, event name, and a short description — and returns them as JSON.
 ├── api/
 │   └── extract-event.ts     # POST /api/extract-event handler
 ├── lib/
-│   ├── minimax.ts           # MiniMax API call + JSON schema + prompt
+│   ├── router.ts            # picks provider based on requested model
+│   ├── openai.ts            # OpenAI extraction (gpt-4o-mini)
+│   ├── minimax.ts           # MiniMax extraction (MiniMax-M3)
+│   ├── prompt.ts            # shared system prompt + JSON schema + model list
 │   └── types.ts             # Event / request / response types
 ├── package.json
 ├── tsconfig.json
@@ -29,11 +43,11 @@ timezone, event name, and a short description — and returns them as JSON.
    npm install
    ```
 
-2. Create `.env.local` for local dev (or set the env var however you prefer):
+2. Create `.env.local` for local dev:
 
    ```bash
    cp .env.example .env.local
-   # then edit .env.local and set MINIMAX_API_KEY
+   # then set whichever API key(s) you need
    ```
 
 3. Run locally:
@@ -46,17 +60,17 @@ timezone, event name, and a short description — and returns them as JSON.
 
 ## Deploy
 
-1. Set the secret in your Vercel project:
+1. Set the secret(s) in your Vercel project:
 
    ```bash
-   vercel env add MINIMAX_API_KEY production
+   vercel env add OPENAI_API_KEY production     # for gpt-4o-mini requests
+   vercel env add MINIMAX_API_KEY production    # for MiniMax-M3 requests
    ```
 
-2. (Optional) Override the base URL or model in production:
+2. (Optional) Override MiniMax base URL:
 
    ```bash
-   vercel env add MINIMAX_BASE_URL production    # default: https://api.minimax.io/v1
-   vercel env add MINIMAX_MODEL production      # default: MiniMax-M3
+   vercel env add MINIMAX_BASE_URL production   # default: https://api.minimax.io/v1
    ```
 
 3. Deploy:
@@ -75,8 +89,13 @@ timezone, event name, and a short description — and returns them as JSON.
 POST /api/extract-event
 Content-Type: application/json
 
-{ "email": "<the full email body as a string>" }
+{
+  "email": "<the full email body as a string>",
+  "model": "gpt-4o-mini" | "MiniMax-M3"
+}
 ```
+
+`model` is **required**. `email` must be a non-empty string.
 
 **Response — `200 OK`**
 
@@ -106,53 +125,39 @@ mentioned, the response is `{ "events": [] }`.
 
 ### Error responses
 
-| Status | When                                                |
-|-------:|-----------------------------------------------------|
-| 400    | Body missing or `email` is not a non-empty string  |
-| 405    | Non-`POST` method                                   |
-| 500    | Missing `MINIMAX_API_KEY` or upstream MiniMax failure |
+| Status | When                                                                        |
+|-------:|-----------------------------------------------------------------------------|
+| 400    | `email` missing/empty, or `model` is not one of the supported values         |
+| 405    | Non-`POST` method                                                           |
+| 500    | Missing API key for the chosen provider, or upstream LLM failure             |
 
 All errors are returned as `{ "error": "<message>" }`.
 
 ## Sample calls
 
-### Single event
+### Single event, OpenAI
 
 ```bash
 curl -X POST https://<your-deployment>.vercel.app/api/extract-event \
   -H "Content-Type: application/json" \
   -d '{
+    "model": "gpt-4o-mini",
     "email": "Reminder: Career Fair on Friday Oct 3, 2025 from 1:00 PM to 5:00 PM at the Illini Union. Bring resumes."
   }'
 ```
 
-Expected response:
-
-```json
-{
-  "events": [
-    {
-      "date": "2025-10-03",
-      "time": "13:00",
-      "timezone": "America/Chicago",
-      "event_name": "Career Fair",
-      "description": "Career fair at the Illini Union, 1pm to 5pm. Bring resumes."
-    }
-  ]
-}
-```
-
-### Multiple events
+### Multiple events, MiniMax
 
 ```bash
 curl -X POST https://<your-deployment>.vercel.app/api/extract-event \
   -H "Content-Type: application/json" \
   -d '{
+    "model": "MiniMax-M3",
     "email": "Hackathon kicks off July 10 1:00 PM to 5:00 PM and continues July 11 1:00 PM to 3:00 PM in Siebel Center."
   }'
 ```
 
-Expected response:
+Expected response (identical shape regardless of provider):
 
 ```json
 {
@@ -175,22 +180,33 @@ Expected response:
 }
 ```
 
+### Bad request — missing `model`
+
+```bash
+curl -i -X POST https://<your-deployment>.vercel.app/api/extract-event \
+  -H "Content-Type: application/json" \
+  -d '{"email":"some email"}'
+# HTTP/1.1 400
+# {"error":"Request body must include a \"model\" field. Supported values: gpt-4o-mini, MiniMax-M3."}
+```
+
 ## Implementation notes
 
-- Uses the official `openai` SDK pointed at MiniMax's OpenAI-compatible endpoint
-  (`https://api.minimax.io/v1`) with model `MiniMax-M3`. Both can be overridden
-  via env vars.
-- `thinking: { type: "disabled" }` is sent on every request so M3 does not
-  inject `<thinking>` content that would corrupt strict JSON output.
-- The model is forced into a strict JSON schema via
-  `response_format: { type: "json_schema", ... }`, so the function does not
-  need to validate or coerce the shape — the SDK guarantees it matches
-  `Event[]`.
-- The system prompt injects today's date so relative phrases like "tomorrow" or
-  "next Tuesday" resolve correctly.
-- `temperature` is set to `0` for deterministic extraction.
-- The MiniMax key is read from `process.env.MINIMAX_API_KEY` and never logged
-  or echoed back to the caller.
+- `lib/router.ts` dispatches on `model`. Adding a new provider means adding a
+  case there and a corresponding `lib/<provider>.ts` module.
+- Both providers share the system prompt and JSON schema in `lib/prompt.ts`,
+  so output shape is identical regardless of which model is called.
+- Both use `response_format: { type: "json_schema", strict: true, ... }` so the
+  SDK guarantees the response matches `Event[]` — no coercion needed.
+- MiniMax additionally sends `thinking: { type: "disabled" }` via `extra_body`
+  so M3 does not inject `<thinking>...</thinking>` content that would corrupt
+  the JSON output.
+- `temperature` is `0` for deterministic extraction.
+- API keys are read from `process.env.OPENAI_API_KEY` and
+  `process.env.MINIMAX_API_KEY` and never echoed back to the caller.
+- The handler returns `400` if `model` is not one of the supported values
+  rather than falling back silently — the caller should know which provider
+  was used.
 
 ## Type-check
 
