@@ -1,6 +1,10 @@
 import OpenAI from "openai";
 import type { Event, ExtractResponse } from "./types.js";
 
+const MINIMAX_BASE_URL =
+  process.env.MINIMAX_BASE_URL ?? "https://api.minimax.io/v1";
+const MINIMAX_MODEL = process.env.MINIMAX_MODEL ?? "MiniMax-M3";
+
 const eventItemSchema = {
   type: "object",
   additionalProperties: false,
@@ -51,19 +55,23 @@ Rules:
 - "timezone" should be an IANA name inferred from location hints, sender context, or explicit mentions (e.g. "America/Chicago", "America/New_York", "UTC"). Use null if it cannot be inferred.
 - "event_name" is a short title; "description" is one sentence.
 - If no event is mentioned, return { "events": [] }.
-- Never invent fields.`;
+- Never invent fields. Return ONLY the JSON object, no prose or markdown.`;
 
 export async function extractEvents(email: string): Promise<ExtractResponse> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.MINIMAX_API_KEY;
   if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not configured");
+    throw new Error("MINIMAX_API_KEY is not configured");
   }
 
-  const client = new OpenAI({ apiKey });
+  const client = new OpenAI({ apiKey, baseURL: MINIMAX_BASE_URL });
   const today = new Date().toISOString().slice(0, 10);
 
+  type MiniMaxBody = Parameters<typeof client.chat.completions.create>[0] & {
+    extra_body?: Record<string, unknown>;
+  };
+
   const completion = await client.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: MINIMAX_MODEL,
     response_format: {
       type: "json_schema",
       json_schema: {
@@ -80,9 +88,13 @@ export async function extractEvents(email: string): Promise<ExtractResponse> {
       },
     ],
     temperature: 0,
-  });
+    // MiniMax-specific: disable thinking so the response is clean JSON
+    // instead of being prefixed with <thinking>...</thinking> tags.
+    extra_body: { thinking: { type: "disabled" } },
+  } as MiniMaxBody);
 
-  const raw = completion.choices[0]?.message?.content;
+  const raw = (completion as OpenAI.Chat.ChatCompletion).choices[0]?.message
+    ?.content;
   if (!raw) {
     return { events: [] };
   }

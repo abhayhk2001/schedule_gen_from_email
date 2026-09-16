@@ -1,9 +1,9 @@
 # schedule_gen_from_email
 
-A Vercel serverless function that takes the contents of an email and uses OpenAI's
-`gpt-4o-mini` (via the official `openai` SDK with strict `json_schema` response
-format) to extract every calendar event mentioned — date, time, IANA timezone,
-event name, and a short description — and returns them as JSON.
+A Vercel serverless function that takes the contents of an email and uses the
+MiniMax M3 model via its OpenAI-compatible API (with strict `json_schema`
+response format) to extract every calendar event mentioned — date, time, IANA
+timezone, event name, and a short description — and returns them as JSON.
 
 ## Project layout
 
@@ -12,7 +12,7 @@ event name, and a short description — and returns them as JSON.
 ├── api/
 │   └── extract-event.ts     # POST /api/extract-event handler
 ├── lib/
-│   ├── openai.ts            # OpenAI call + JSON schema + prompt
+│   ├── minimax.ts           # MiniMax API call + JSON schema + prompt
 │   └── types.ts             # Event / request / response types
 ├── package.json
 ├── tsconfig.json
@@ -33,7 +33,7 @@ event name, and a short description — and returns them as JSON.
 
    ```bash
    cp .env.example .env.local
-   # then edit .env.local and set OPENAI_API_KEY
+   # then edit .env.local and set MINIMAX_API_KEY
    ```
 
 3. Run locally:
@@ -49,10 +49,17 @@ event name, and a short description — and returns them as JSON.
 1. Set the secret in your Vercel project:
 
    ```bash
-   vercel env add OPENAI_API_KEY production
+   vercel env add MINIMAX_API_KEY production
    ```
 
-2. Deploy:
+2. (Optional) Override the base URL or model in production:
+
+   ```bash
+   vercel env add MINIMAX_BASE_URL production    # default: https://api.minimax.io/v1
+   vercel env add MINIMAX_MODEL production      # default: MiniMax-M3
+   ```
+
+3. Deploy:
 
    ```bash
    vercel --prod
@@ -103,7 +110,7 @@ mentioned, the response is `{ "events": [] }`.
 |-------:|-----------------------------------------------------|
 | 400    | Body missing or `email` is not a non-empty string  |
 | 405    | Non-`POST` method                                   |
-| 500    | Missing `OPENAI_API_KEY` or upstream OpenAI failure |
+| 500    | Missing `MINIMAX_API_KEY` or upstream MiniMax failure |
 
 All errors are returned as `{ "error": "<message>" }`.
 
@@ -170,14 +177,20 @@ Expected response:
 
 ## Implementation notes
 
-- The model is forced into a strict JSON schema via OpenAI's
-  `response_format: { type: "json_schema", ... }`, so the function does not need
-  to validate or coerce the shape — the SDK guarantees it matches `Event[]`.
+- Uses the official `openai` SDK pointed at MiniMax's OpenAI-compatible endpoint
+  (`https://api.minimax.io/v1`) with model `MiniMax-M3`. Both can be overridden
+  via env vars.
+- `thinking: { type: "disabled" }` is sent on every request so M3 does not
+  inject `<thinking>` content that would corrupt strict JSON output.
+- The model is forced into a strict JSON schema via
+  `response_format: { type: "json_schema", ... }`, so the function does not
+  need to validate or coerce the shape — the SDK guarantees it matches
+  `Event[]`.
 - The system prompt injects today's date so relative phrases like "tomorrow" or
   "next Tuesday" resolve correctly.
 - `temperature` is set to `0` for deterministic extraction.
-- The OpenAI key is read from `process.env.OPENAI_API_KEY` and never logged or
-  echoed back to the caller.
+- The MiniMax key is read from `process.env.MINIMAX_API_KEY` and never logged
+  or echoed back to the caller.
 
 ## Type-check
 
