@@ -1,9 +1,10 @@
 # schedule_gen_from_email
 
 A Vercel serverless function that takes the contents of an email and uses an
-LLM to extract every calendar event mentioned — date, time, IANA timezone,
-event name, and a short description — and returns them as JSON. The caller
-chooses the LLM per request via a `model` field.
+LLM to extract every calendar event mentioned and returns it as JSON suitable
+for creating Outlook events (start/end dates, start/end times, whole-day
+flag, IANA timezone, event name, description). The caller chooses the LLM
+per request via a `model` field.
 
 Supported models:
 
@@ -130,14 +131,20 @@ Content-Type: application/json
       "time": "13:00",
       "timezone": "America/Chicago",
       "event_name": "Hackathon Day 1",
-      "description": "Day 1 of the campus hackathon, 1pm to 5pm."
+      "description": "Day 1 of the campus hackathon, 1pm to 5pm.",
+      "whole_day": false,
+      "end_date": null,
+      "end_time": "17:00"
     },
     {
       "date": "2025-07-11",
       "time": "13:00",
       "timezone": "America/Chicago",
       "event_name": "Hackathon Day 2",
-      "description": "Day 2 of the campus hackathon, 1pm to 3pm."
+      "description": "Day 2 of the campus hackathon, 1pm to 3pm.",
+      "whole_day": false,
+      "end_date": null,
+      "end_time": "15:00"
     }
   ]
 }
@@ -145,6 +152,30 @@ Content-Type: application/json
 
 Any field the model cannot infer is returned as `null`. If no event is
 mentioned, the response is `{ "events": [] }`.
+
+### Event fields
+
+| Field        | Type             | Notes                                                       |
+|--------------|------------------|-------------------------------------------------------------|
+| `date`       | string \| null   | ISO YYYY-MM-DD. Start date.                                 |
+| `time`       | string \| null   | 24h HH:MM. Start time. `null` when `whole_day=true`.        |
+| `timezone`   | string \| null   | IANA name (e.g. `America/Chicago`). `null` if not inferable. |
+| `event_name` | string \| null   | Short title.                                                |
+| `description`| string \| null   | One-sentence summary.                                       |
+| `whole_day`  | boolean          | `true` ⇒ no specific time-of-day on that date.              |
+| `end_date`   | string \| null   | ISO YYYY-MM-DD end date. `null` when entry spans one day.   |
+| `end_time`   | string \| null   | 24h HH:MM end time. `null` when `whole_day=true` or absent. |
+
+### Multi-day handling
+
+| Input pattern | Output |
+|---------------|--------|
+| Same-day with explicit end time (`"2pm to 3pm"`, `"9am-5pm"`) | 1 entry: `whole_day=false`, `time=<start>`, `end_time=<end>`, `end_date=null` |
+| Date range, no times (`"Oct 5 to Oct 8"`, `"Oct 10-20"`) | One `whole_day=true` entry per calendar day in the range; `time=null`, `end_time=null` |
+| Date range with `"each day"` / `"daily"` times (`"Oct 10-12, 9am-5pm each day"`, `"Mon Oct 5 to Wed Oct 7, daily 10am-4pm"`) | One entry per calendar day, each with `whole_day=false`, `time=<start-of-day>`, `end_time=<end-of-day>` |
+| Independent events (`"Day 1: ... Day 2: ..."`) | One entry per event, each with its own `time` / `end_time` / `whole_day` |
+
+Registration deadlines and RSVP dates are **not** emitted as events.
 
 ### Error responses
 
@@ -190,14 +221,20 @@ Expected response (identical shape regardless of provider):
       "time": "13:00",
       "timezone": "America/Chicago",
       "event_name": "Hackathon Day 1",
-      "description": "Day 1 of the hackathon in Siebel Center, 1pm to 5pm."
+      "description": "Day 1 of the hackathon in Siebel Center, 1pm to 5pm.",
+      "whole_day": false,
+      "end_date": null,
+      "end_time": "17:00"
     },
     {
       "date": "2025-07-11",
       "time": "13:00",
       "timezone": "America/Chicago",
       "event_name": "Hackathon Day 2",
-      "description": "Day 2 of the hackathon in Siebel Center, 1pm to 3pm."
+      "description": "Day 2 of the hackathon in Siebel Center, 1pm to 3pm.",
+      "whole_day": false,
+      "end_date": null,
+      "end_time": "15:00"
     }
   ]
 }
@@ -251,12 +288,18 @@ npm run typecheck
 npm test
 ```
 
-27 unit tests covering the 12 validation cases from the API analysis,
+28 unit tests covering the 12 validation cases from the API analysis,
 provider routing, the shared extraction helper (null content, malformed JSON,
-non-array events, `extra_body` propagation), and the error-wrapping behaviour
-(Fix 6) — `ConfigError` messages pass through; any other error is logged
-server-side and replaced with a generic `"Extraction failed"` response so
-upstream details never leak to the caller.
+non-array events, `extra_body` propagation, `whole_day=true` handling), and
+the error-wrapping behaviour (Fix 6) — `ConfigError` messages pass through;
+any other error is logged server-side and replaced with a generic
+`"Extraction failed"` response so upstream details never leak to the caller.
+
+## Live regression battery
+
+`run-tests.sh` exercises 8 multi-day scenarios against the deployed API. Use
+it after any prompt change to confirm the model still follows the rules in
+the [Multi-day handling](#multi-day-handling) table.
 
 ## Notes
 

@@ -27,7 +27,7 @@ describe("lib/extract.ts — runExtraction", () => {
     expect(result).toEqual({ events: [] });
   });
 
-  it("parses valid JSON and returns events array", async () => {
+  it("parses valid JSON and returns events array (incl. new fields)", async () => {
     const client = makeMockClient(
       JSON.stringify({
         events: [
@@ -37,6 +37,9 @@ describe("lib/extract.ts — runExtraction", () => {
             timezone: "America/Chicago",
             event_name: "Career Fair",
             description: "Bring resumes.",
+            whole_day: false,
+            end_date: null,
+            end_time: "17:00",
           },
         ],
       }),
@@ -44,6 +47,8 @@ describe("lib/extract.ts — runExtraction", () => {
     const result = await runExtraction(client, "m", "hi");
     expect(result.events).toHaveLength(1);
     expect(result.events[0].event_name).toBe("Career Fair");
+    expect(result.events[0].end_time).toBe("17:00");
+    expect(result.events[0].whole_day).toBe(false);
   });
 
   it("returns { events: [] } on malformed JSON instead of throwing", async () => {
@@ -88,17 +93,52 @@ describe("lib/extract.ts — runExtraction", () => {
     expect(args.messages[1].content).toContain("the email body");
   });
 
-  it("uses strict json_schema response_format", async () => {
+  it("uses strict json_schema response_format with whole_day, end_date, end_time", async () => {
     const client = makeMockClient();
     await runExtraction(client, "m", "hi");
     const args = (client.chat.completions.create as ReturnType<typeof vi.fn>).mock
       .calls[0][0] as {
       response_format: {
         type: string;
-        json_schema: { strict: boolean; schema: unknown };
+        json_schema: { strict: boolean; schema: { properties: { events: { items: { required: string[] } } } } };
       };
     };
     expect(args.response_format.type).toBe("json_schema");
     expect(args.response_format.json_schema.strict).toBe(true);
+    expect(args.response_format.json_schema.schema.properties.events.items.required).toEqual(
+      expect.arrayContaining([
+        "whole_day",
+        "end_date",
+        "end_time",
+        "date",
+        "time",
+        "timezone",
+        "event_name",
+        "description",
+      ]),
+    );
+  });
+
+  it("parses whole_day=true with time/end_time=null", async () => {
+    const client = makeMockClient(
+      JSON.stringify({
+        events: [
+          {
+            date: "2026-10-05",
+            time: null,
+            timezone: null,
+            event_name: "Offsite",
+            description: "Annual offsite.",
+            whole_day: true,
+            end_date: null,
+            end_time: null,
+          },
+        ],
+      }),
+    );
+    const result = await runExtraction(client, "m", "hi");
+    expect(result.events[0].whole_day).toBe(true);
+    expect(result.events[0].time).toBeNull();
+    expect(result.events[0].end_time).toBeNull();
   });
 });
