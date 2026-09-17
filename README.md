@@ -434,7 +434,22 @@ clicking **Create**. Each row becomes its own Outlook event.
 
 No setup required. `makeEwsRequestAsync` is provided by the Office Add-in
 runtime using the signed-in user's mailbox identity — no token, no Azure
-app, no manifest changes.
+app.
+
+### Required permission
+
+The manifest declares `<Permissions>ReadWriteMailbox</Permissions>`. This
+is what allows `makeEwsRequestAsync` to create calendar items. On first
+use Outlook will show a one-time consent dialog asking you to allow the
+add-in to **read and modify items in your mailbox**. Click **Allow**.
+
+This is the broadest of the four permission levels
+(`Restricted`, `ReadItem`, `ReadWriteItem`, `ReadWriteMailbox`) and is
+required by EWS calendar operations. If your tenant is a Microsoft 365
+work/school account and your admin has locked down custom add-in
+permissions, the install will fail at the consent step — the fix is to
+ask the admin to allowlist the add-in or grant `ReadWriteMailbox`
+tenant-wide.
 
 ### Error policy
 
