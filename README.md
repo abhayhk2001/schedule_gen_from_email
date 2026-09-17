@@ -379,22 +379,50 @@ renders the returned events.
 After the events render, each card has a checkbox + **× remove** button, and
 the footer shows a green **"Create N events in calendar"** button.
 
-### What gets sent to Graph
+### Transport: EWS via `makeEwsRequestAsync`
 
-For each non-removed event, the add-in calls `POST https://graph.microsoft.com/v1.0/me/events`
-with a Bearer token from `Office.context.mailbox.getCallbackTokenAsync({isRest: true})`.
+The add-in uses Exchange Web Services (EWS) SOAP rather than the Microsoft
+Graph REST API. EWS is the canonical path for Outlook Add-in calendar
+operations and works on any Exchange-backed mailbox without requiring an
+Azure App Registration, manifest WebApplicationInfo, or admin consent.
 
-| API field | `whole_day` | Graph payload |
-|-----------|:-----------:|---------------|
-| All day | true | `start.dateTime = ev.date`, `end.dateTime = ev.end_date ?? ev.date + 1 day`, `isAllDay: true` |
-| Timed | false | `start.dateTime = "{date}T{time}:00"`, `end.dateTime = "{end_date ?? date}T{end_time ?? time+1h}:00"`, `isAllDay: false` |
-| Both | — | `timeZone = ev.timezone ?? "UTC"`, `subject = ev.event_name`, `body.content = ev.description` |
+For each non-removed event, the add-in sends a `CreateItem` SOAP request:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="..." xmlns:m="..." xmlns:t="...">
+  <soap:Header><t:RequestServerVersion Version="V2_0"/></soap:Header>
+  <soap:Body>
+    <m:CreateItem SendMeetingInvitations="SendToNone">
+      <m:SavedItemFolderId>
+        <t:DistinguishedFolderId Id="calendar"/>
+      </m:SavedItemFolderId>
+      <m:Items>
+        <t:CalendarItem>
+          <t:Subject>{event_name}</t:Subject>
+          <t:Body BodyType="Text">{description}</t:Body>
+          <t:Start>{date | date}T{time}:00</t:Start>
+          <t:End>{end_date | date}T{end_time | time+1h}:00</t:End>
+          <t:IsAllDayEvent>{true | false}</t:IsAllDayEvent>
+        </t:CalendarItem>
+      </m:Items>
+    </m:CreateItem>
+  </soap:Body>
+</soap:Envelope>
+```
+
+| API field | `whole_day` | EWS payload |
+|-----------|:-----------:|-------------|
+| All day | true | `<t:Start>{date}</t:Start>`, `<t:End>{end_date ?? date+1d}</t:End>`, `<t:IsAllDayEvent>true</t:IsAllDayEvent>` |
+| Timed | false | `<t:Start>{date}T{time}:00</t:Start>`, `<t:End>{end_date ?? date}T{end_time ?? time+1h}:00</t:End>`, `<t:IsAllDayEvent>false</t:IsAllDayEvent>` |
+| Both | — | `<t:Subject>{event_name}</t:Subject>`, `<t:Body BodyType="Text">{description}</t:Body>` |
 
 ### Fallback rules
 
 - Missing `end_time` on a timed event → end = start + 1 hour.
 - Missing `end_date` on a whole-day event → end = start + 1 day.
-- Missing `timezone` → defaults to `UTC`.
+- Missing `timezone` → server interprets Start/End in the mailbox's local
+  timezone.
 
 ### Multi-day handling
 
@@ -404,14 +432,13 @@ clicking **Create**. Each row becomes its own Outlook event.
 
 ### Auth
 
-Uses the Outlook-provided callback token — no Azure App Registration, no
-manifest WebApplicationInfo, no admin consent. The token is scoped for
-`https://graph.microsoft.com` and pre-authorizes `Calendars.ReadWrite` for
-the signed-in user's own mailbox.
+No setup required. `makeEwsRequestAsync` is provided by the Office Add-in
+runtime using the signed-in user's mailbox identity — no token, no Azure
+app, no manifest changes.
 
 ### Error policy
 
 Failures are reported per event. A failed row stays in the list with its
-error message and a **Retry** button; successful rows show an **Open in
-Outlook** link to the newly created event. One failure does not block the
+error message and a **Retry** button; successful rows show **"Created —
+open your Outlook calendar to view"**. One failure does not block the
 others.

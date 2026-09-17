@@ -12,8 +12,6 @@ const state = {
   results: null,
 };
 
-const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
-
 function setStatus(kind, text) {
   status.className = `status ${kind}`;
   status.textContent = text;
@@ -33,6 +31,15 @@ function escapeHtml(s) {
     '"': "&quot;",
     "'": "&#39;",
   }[c]));
+}
+
+function escapeXml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }
 
 function formatTime(ev) {
@@ -60,86 +67,85 @@ function addDaysToISO(yyyymmdd, days) {
   return d.toISOString().slice(0, 10);
 }
 
-function mapToGraphEvent(ev) {
-  const tz = ev.timezone || "UTC";
+function mapToEwsFields(ev) {
   const subject = ev.event_name || "Untitled event";
-  const body = {
-    contentType: "text",
-    content: ev.description || "",
-  };
+  const body = ev.description || "";
   if (ev.whole_day) {
-    const startDate = ev.date;
-    const endDate = ev.end_date || addDaysToISO(ev.date, 1);
     return {
       subject,
       body,
-      start: { dateTime: startDate, timeZone: tz },
-      end: { dateTime: endDate, timeZone: tz },
+      start: ev.date,
+      end: ev.end_date || addDaysToISO(ev.date, 1),
       isAllDay: true,
     };
   }
-  const startDateTime = `${ev.date}T${ev.time}:00`;
-  const endDate = ev.end_date || ev.date;
-  const endTime = ev.end_time || addHoursToHHMM(ev.time || "00:00", 1);
-  const endDateTime = `${endDate}T${endTime}:00`;
   return {
     subject,
     body,
-    start: { dateTime: startDateTime, timeZone: tz },
-    end: { dateTime: endDateTime, timeZone: tz },
+    start: `${ev.date}T${ev.time}:00`,
+    end: `${ev.end_date || ev.date}T${
+      ev.end_time || addHoursToHHMM(ev.time || "00:00", 1)
+    }:00`,
     isAllDay: false,
   };
 }
 
-async function getAccessToken() {
+function buildEwsCreateCalendarItemXml(item) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope
+  xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+  xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+  <soap:Header>
+    <t:RequestServerVersion Version="V2_0"/>
+  </soap:Header>
+  <soap:Body>
+    <m:CreateItem SendMeetingInvitations="SendToNone">
+      <m:SavedItemFolderId>
+        <t:DistinguishedFolderId Id="calendar"/>
+      </m:SavedItemFolderId>
+      <m:Items>
+        <t:CalendarItem>
+          <t:Subject>${escapeXml(item.subject)}</t:Subject>
+          <t:Body BodyType="Text">${escapeXml(item.body)}</t:Body>
+          <t:Start>${item.start}</t:Start>
+          <t:End>${item.end}</t:End>
+          <t:IsAllDayEvent>${item.isAllDay}</t:IsAllDayEvent>
+        </t:CalendarItem>
+      </m:Items>
+    </m:CreateItem>
+  </soap:Body>
+</soap:Envelope>`;
+}
+
+function makeEwsRequest(xml) {
   return new Promise((resolve, reject) => {
-    Office.context.mailbox.getCallbackTokenAsync(
-      { isRest: true },
-      (result) => {
-        if (result.status === Office.AsyncResultStatus.Succeeded) {
-          resolve(result.value);
-        } else {
-          reject(
-            new Error(
-              result.error?.message ?? "Failed to acquire callback token",
-            ),
-          );
-        }
-      },
-    );
+    Office.context.mailbox.makeEwsRequestAsync(xml, (result) => {
+      if (result.status === Office.AsyncResultStatus.Succeeded) {
+        resolve(result.value);
+      } else {
+        const code =
+          result.error?.code ?? result.error?.message ?? "unknown";
+        reject(new Error(`EWS error (${code})`));
+      }
+    });
   });
 }
 
-async function postEvent(token, payload) {
-  const resp = await fetch(`${GRAPH_BASE}/me/events`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!resp.ok) {
-    let detail = "";
-    try {
-      const j = await resp.json();
-      detail = j?.error?.message ?? "";
-    } catch {
-      detail = await resp.text().catch(() => "");
-    }
-    throw new Error(`HTTP ${resp.status}${detail ? `: ${detail}` : ""}`);
-  }
-  return resp.json();
+async function createCalendarItem(ev) {
+  const item = mapToEwsFields(ev);
+  const xml = buildEwsCreateCalendarItemXml(item);
+  const responseXml = await makeEwsRequest(xml);
+  const idMatch = responseXml.match(/<t:ItemId\s+Id="([^"]+)"/);
+  return { itemId: idMatch ? idMatch[1] : null };
 }
 
 async function createEvents(events) {
-  const token = await getAccessToken();
   const results = [];
   for (const ev of events) {
     try {
-      const payload = mapToGraphEvent(ev);
-      const data = await postEvent(token, payload);
-      results.push({ ev, status: "success", webLink: data.webLink });
+      const { itemId } = await createCalendarItem(ev);
+      results.push({ ev, status: "success", itemId });
     } catch (err) {
       results.push({ ev, status: "error", error: err?.message ?? String(err) });
     }
@@ -265,13 +271,11 @@ function renderResults() {
     when.textContent = `${r.ev.date ?? "?"} · ${formatTime(r.ev)}`;
     body.appendChild(when);
 
-    if (r.status === "success" && r.webLink) {
-      const link = document.createElement("a");
-      link.href = r.webLink;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.textContent = "Open in Outlook";
-      body.appendChild(link);
+    if (r.status === "success") {
+      const note = document.createElement("p");
+      note.className = "desc";
+      note.textContent = "Created — open your Outlook calendar to view.";
+      body.appendChild(note);
     } else if (r.status === "error") {
       const err = document.createElement("p");
       err.className = "error-text";
@@ -297,9 +301,8 @@ async function retryOne(idx) {
   state.results[idx] = { ev: r.ev, status: "pending" };
   renderResults();
   try {
-    const token = await getAccessToken();
-    const data = await postEvent(token, mapToGraphEvent(r.ev));
-    state.results[idx] = { ev: r.ev, status: "success", webLink: data.webLink };
+    const { itemId } = await createCalendarItem(r.ev);
+    state.results[idx] = { ev: r.ev, status: "success", itemId };
   } catch (err) {
     state.results[idx] = {
       ev: r.ev,
