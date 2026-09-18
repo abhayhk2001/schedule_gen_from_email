@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+export const MANIFEST_TEMPLATE = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <OfficeApp
   xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -175,3 +175,6 @@
     </WebApplicationInfo>
   </VersionOverrides>
 </OfficeApp>
+`;
+
+export const MANIFEST_PLACEHOLDER = "__AZURE_CLIENT_ID__";

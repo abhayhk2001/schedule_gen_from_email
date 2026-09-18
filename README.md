@@ -22,13 +22,15 @@ endpoint.
 ```
 .
 ├── api/
-│   └── extract-event.ts     # POST /api/extract-event handler
+│   ├── extract-event.ts     # POST /api/extract-event handler
+│   └── manifest.xml.ts      # GET /api/manifest.xml — Outlook manifest with AZURE_CLIENT_ID injected from env
 ├── lib/
 │   ├── router.ts            # picks provider based on requested model
 │   ├── openai.ts            # OpenAI extraction (gpt-4o-mini)
 │   ├── minimax.ts           # MiniMax extraction (MiniMax-M3)
 │   ├── extract.ts           # shared chat-completion + JSON-parse helper
 │   ├── errors.ts            # ConfigError class
+│   ├── manifest-template.ts # Outlook manifest XML template (__AZURE_CLIENT_ID__ placeholder)
 │   ├── prompt.ts            # shared system prompt + JSON schema + model list
 │   └── types.ts             # Event / request / response types
 ├── tests/
@@ -41,7 +43,6 @@ endpoint.
 │   ├── site.css             # styles for the landing page
 │   ├── site.js              # calls /api/extract-event from the landing page
 │   └── outlook-addin/       # Outlook Add-in (static files served by Vercel)
-│       ├── manifest.xml
 │       ├── index.html
 │       ├── app.js
 │       ├── app.css
@@ -346,7 +347,7 @@ renders the returned events.
 4. Paste:
 
    ```
-   https://schedule-gen-from-email.vercel.app/outlook-addin/manifest.xml
+   https://schedule-gen-from-email.vercel.app/api/manifest.xml
    ```
 
 5. Click **Install**, accept the permission prompt (`ReadItem`).
@@ -359,13 +360,15 @@ renders the returned events.
 1. **File** → **Manage Add-ins** (or **Get Add-ins** → **My add-ins**).
 2. Click **+ Add a custom add-in** → **Add from File…** (the on-the-web
    flow only allows URL-based manifests in newer builds; for desktop you may
-   need to download `manifest.xml` to disk first).
+   need to download the manifest to disk first via
+   `https://schedule-gen-from-email.vercel.app/api/manifest.xml`).
 
 ### Files
 
 | Path | Purpose |
 |------|---------|
-| `public/outlook-addin/manifest.xml` | Outlook Add-in manifest. Fixed GUID; bump `Version` when redeploying changes. |
+| `api/manifest.xml.ts` | Vercel route that serves the Outlook manifest with `AZURE_CLIENT_ID` injected at request time. |
+| `lib/manifest-template.ts` | Manifest XML template (single source of truth). Contains the `__AZURE_CLIENT_ID__` placeholder. |
 | `public/outlook-addin/index.html` | Task-pane UI. |
 | `public/outlook-addin/app.js` | Office.js + fetch logic. |
 | `public/outlook-addin/app.css` | Card styling. |
@@ -452,7 +455,7 @@ clicking **Create**. Each row becomes its own Outlook event.
 
 ### Manifest wiring
 
-`public/outlook-addin/manifest.xml` carries:
+`lib/manifest-template.ts` carries the XML shipped by `api/manifest.xml.ts`:
 
 - A `VersionOverridesV1_1` block (required for SSO).
 - `<Permissions>ReadWriteItem</Permissions>` — the Office API surface we
@@ -461,9 +464,17 @@ clicking **Create**. Each row becomes its own Outlook event.
 - `<WebApplicationInfo>` with the Azure client ID, Application ID URI,
   and the five Graph scopes listed above.
 
-After the Azure registration, replace both occurrences of
-`__AZURE_CLIENT_ID__` in `manifest.xml` with the real GUID and re-sideload
-the manifest. Bump `<Version>` when you change the manifest.
+The real client ID is **never committed to the repo**. Set the
+`AZURE_CLIENT_ID` environment variable so the API route can substitute it
+into the `__AZURE_CLIENT_ID__` placeholder at request time:
+
+```bash
+vercel env add AZURE_CLIENT_ID production   # paste your GUID when prompted
+```
+
+Bump the `Version` in `lib/manifest-template.ts` when you change the
+manifest. Without `AZURE_CLIENT_ID` the route returns `503` so the
+absence is loud, not silent.
 
 ### Required permission
 
