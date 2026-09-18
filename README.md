@@ -46,7 +46,10 @@ endpoint.
 │       ├── index.html
 │       ├── app.js
 │       ├── app.css
-│       └── assets/          # placeholder icons (16/32/64/80/128 px)
+│       ├── theme.js
+│       └── assets/          # 16/32/64/80/128 px icons referenced by the manifest
+├── assets/
+│   └── app-icon.png         # master source for the manifest icons (697x697). Regenerate sizes with `sips -z`.
 ├── run-tests.sh             # live regression battery (8 multi-day scenarios)
 ├── vitest.config.ts
 ├── package.json
