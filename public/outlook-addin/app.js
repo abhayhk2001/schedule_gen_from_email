@@ -35,15 +35,9 @@ function pushLog(level, text) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-pushLog("meta", "debug panel ready");
-pushLog("meta", `Office host: ${typeof Office !== "undefined" ? Office.context?.host ?? "unknown" : "Office.js not loaded"}`);
 pushLog(
   "meta",
-  `auth.getAccessToken available: ${typeof Office?.auth?.getAccessToken === "function"}`,
-);
-pushLog(
-  "meta",
-  `host name: ${typeof Office !== "undefined" ? Office.context?.mailbox?.diagnostics?.hostName ?? "?" : "?"}`,
+  `Office global loaded: ${typeof Office !== "undefined"}; will print host info after Office.onReady`,
 );
 
 const GRAPH_RESOURCE = "https://graph.microsoft.com";
@@ -479,7 +473,27 @@ async function retryOne(idx) {
 }
 
 Office.onReady((info) => {
-  if (info.host !== Office.HostType.Outlook) return;
+  pushLog(
+    "info",
+    `Office.onReady host=${info.host} platform=${info.platform ?? "?"}`,
+  );
+  pushLog(
+    "info",
+    `Office.context.host=${Office.context?.host ?? "?"}`,
+  );
+  pushLog(
+    "info",
+    `hostName=${Office.context?.mailbox?.diagnostics?.hostName ?? "?"}`,
+  );
+  pushLog(
+    "info",
+    `auth.getAccessToken available: ${typeof Office?.auth?.getAccessToken === "function"}`,
+  );
+
+  if (info.host !== Office.HostType.Outlook) {
+    pushLog("warn", `not in an Outlook host (info.host=${info.host}); aborting`);
+    return;
+  }
 
   initTheme();
   paintThemeButton();
