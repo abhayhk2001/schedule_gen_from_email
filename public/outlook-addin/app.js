@@ -12,6 +12,7 @@ const themeIcon = $("theme-icon");
 const debugSection = $("debug");
 const logEl = $("log");
 const testSsoBtn = $("test-sso-btn");
+const testSsoBareBtn = $("test-sso-bare-btn");
 const copyLogBtn = $("copy-log-btn");
 const clearLogBtn = $("clear-log-btn");
 
@@ -69,12 +70,25 @@ if (themeBtn) {
 }
 
 async function testSsoOnly() {
-  pushLog("info", "Test SSO: invoking getAccessToken (no Graph POST)");
+  pushLog("info", "Test SSO: invoking getAccessToken (Graph SSO, forMSGraphAccess=true)");
   try {
-    await getGraphToken(GRAPH_DEFAULT_SCOPES);
+    await getGraphToken(GRAPH_DEFAULT_SCOPES, { mode: "graph" });
     pushLog("success", "Test SSO: completed without error");
   } catch (err) {
     pushLog("error", `Test SSO: ${err?.message ?? String(err)}`);
+  }
+}
+
+async function testSsoBareOnly() {
+  pushLog("info", "Test SSO (no Graph): invoking getAccessToken (forMSGraphAccess=false)");
+  try {
+    await getGraphToken(
+      ["openid", "profile", "offline_access", "User.Read", "Calendars.ReadWrite"],
+      { mode: "bare", timeoutMs: 15_000 },
+    );
+    pushLog("success", "Test SSO (no Graph): completed without error");
+  } catch (err) {
+    pushLog("error", `Test SSO (no Graph): ${err?.message ?? String(err)}`);
   }
 }
 
@@ -94,6 +108,9 @@ async function copyLogToClipboard() {
 
 if (testSsoBtn) {
   testSsoBtn.addEventListener("click", testSsoOnly);
+}
+if (testSsoBareBtn) {
+  testSsoBareBtn.addEventListener("click", testSsoBareOnly);
 }
 if (copyLogBtn) {
   copyLogBtn.addEventListener("click", copyLogToClipboard);
@@ -198,53 +215,70 @@ function mapToGraphFields(ev) {
   };
 }
 
-function getGraphToken(scopes) {
+function getGraphToken(scopes, { timeoutMs = 30_000, mode = "graph" } = {}) {
   return new Promise((resolve, reject) => {
     if (!Office?.auth?.getAccessToken) {
       pushLog("error", "Office.auth.getAccessToken is not available in this host");
+      console.error("[sso] Office.auth.getAccessToken missing");
       reject(new Error("Office.auth.getAccessToken is not available in this host."));
       return;
     }
+    const options = {
+      allowSignInPrompt: true,
+      allowConsentPrompt: true,
+      allowMultipleSignInPrompt: false,
+      scopes,
+    };
+    if (mode === "graph") options.forMSGraphAccess = true;
     pushLog(
       "info",
-      `getAccessToken requested with scopes: ${scopes.join(", ")}`,
+      `getAccessToken mode=${mode} scopes=[${scopes.join(", ")}] forMSGraphAccess=${mode === "graph"}`,
     );
-    pushLog("info", `forMSGraphAccess=true, allowConsentPrompt=true`);
-    Office.auth.getAccessToken(
-      {
-        allowSignInPrompt: true,
-        allowConsentPrompt: true,
-        allowMultipleSignInPrompt: false,
-        forMSGraphAccess: true,
-        scopes,
-      },
-      (result) => {
+    console.info("[sso] getAccessToken options", options);
+
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      pushLog(
+        "error",
+        `getAccessToken TIMED OUT after ${timeoutMs}ms — call never returned. The dialog may have appeared off-screen; check behind the Outlook window and any other desktops/spaces.`,
+      );
+      console.error(`[sso] timeout after ${timeoutMs}ms`);
+      reject(new Error(`SSO timeout after ${timeoutMs}ms (no callback fired)`));
+    }, timeoutMs);
+
+    Office.auth.getAccessToken(options, (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      console.info("[sso] callback result", result);
+      pushLog(
+        "info",
+        `getAccessToken callback status=${result?.status}`,
+      );
+      if (result?.status === "succeeded") {
+        const preview = String(result.value ?? "").slice(0, 24);
+        pushLog("success", `token acquired (preview: ${preview}...)`);
+        resolve(result.value);
+      } else {
+        const err = result?.error ?? {};
+        const code = err.code ?? "?";
+        const name = err.name ?? "";
+        const message = err.message ?? "Failed to acquire token";
+        const trace = Array.isArray(err.traceMessages)
+          ? ` | trace: ${err.traceMessages.join(" / ")}`
+          : "";
         pushLog(
-          "info",
-          `getAccessToken callback status=${result.status}`,
+          "error",
+          `getAccessToken FAILED code=${code} name=${name || "?"} msg="${message}"${trace}`,
         );
-        if (result.status === "succeeded") {
-          const preview = String(result.value ?? "").slice(0, 24);
-          pushLog("success", `token acquired (preview: ${preview}...)`);
-          resolve(result.value);
-        } else {
-          const err = result.error ?? {};
-          const code = err.code ?? "?";
-          const name = err.name ?? "";
-          const message = err.message ?? "Failed to acquire token";
-          const trace = Array.isArray(err.traceMessages)
-            ? ` | trace: ${err.traceMessages.join(" / ")}`
-            : "";
-          pushLog(
-            "error",
-            `getAccessToken FAILED code=${code} name=${name || "?"} msg="${message}"${trace}`,
-          );
-          reject(
-            new Error(`SSO error (${code}): ${message}${trace}`),
-          );
-        }
-      },
-    );
+        console.error("[sso] failed", { code, name, message, trace: err.traceMessages });
+        reject(
+          new Error(`SSO error (${code}): ${message}${trace}`),
+        );
+      }
+    });
   });
 }
 

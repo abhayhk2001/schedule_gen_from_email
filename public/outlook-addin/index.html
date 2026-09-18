@@ -42,8 +42,11 @@
         <header class="debug-head">
           <h2>Debug</h2>
           <div class="debug-actions">
-            <button id="test-sso-btn" class="debug-btn" type="button" title="Call getAccessToken only; no Graph POST">
+            <button id="test-sso-btn" class="debug-btn" type="button" title="getAccessToken with forMSGraphAccess (Graph SSO). Times out after 30s.">
               Test SSO
+            </button>
+            <button id="test-sso-bare-btn" class="debug-btn" type="button" title="getAccessToken WITHOUT forMSGraphAccess. Use to isolate whether the hang is in the Graph SSO step.">
+              Test SSO (no Graph)
             </button>
             <button id="copy-log-btn" class="debug-btn" type="button" title="Copy log entries to clipboard">
               Copy log
