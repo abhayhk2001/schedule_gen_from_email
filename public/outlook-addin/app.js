@@ -13,6 +13,9 @@ const debugSection = $("debug");
 const logEl = $("log");
 const testSsoBtn = $("test-sso-btn");
 const testSsoBareBtn = $("test-sso-bare-btn");
+const testLegacySsoBtn = $("test-legacy-sso-btn");
+const testCallbackTokenBtn = $("test-callback-token-btn");
+const reloadPaneBtn = $("reload-pane-btn");
 const copyLogBtn = $("copy-log-btn");
 const clearLogBtn = $("clear-log-btn");
 
@@ -40,6 +43,10 @@ pushLog(
   "meta",
   `Office global loaded: ${typeof Office !== "undefined"}; will print host info after Office.onReady`,
 );
+if (typeof navigator !== "undefined") {
+  pushLog("meta", `navigator.userAgent=${navigator.userAgent}`);
+  pushLog("meta", `navigator.platform=${navigator.platform}`);
+}
 
 const GRAPH_RESOURCE = "https://graph.microsoft.com";
 const GRAPH_DEFAULT_SCOPES = ["openid", "profile", "offline_access", "User.Read", "Calendars.ReadWrite"];
@@ -92,6 +99,71 @@ async function testSsoBareOnly() {
   }
 }
 
+async function testLegacySso() {
+  pushLog("info", "Legacy SSO: invoking Office.context.auth.getAccessToken");
+  const ctxAuth = Office?.context?.auth;
+  if (!ctxAuth || typeof ctxAuth.getAccessToken !== "function") {
+    pushLog("warn", "Office.context.auth.getAccessToken not present in this host");
+    console.warn("[sso-legacy] no Office.context.auth");
+    return;
+  }
+  const t0 = performance.now();
+  ctxAuth.getAccessToken(
+    { allowSignInPrompt: true, allowConsentPrompt: true },
+    (result) => {
+      const dt = Math.round(performance.now() - t0);
+      if (result?.status === "succeeded") {
+        const preview = String(result.value ?? "").slice(0, 24);
+        pushLog("success", `Legacy SSO token (${dt}ms) preview=${preview}...`);
+        console.info("[sso-legacy] succeeded", { dt, preview });
+      } else {
+        const err = result?.error ?? {};
+        pushLog(
+          "error",
+          `Legacy SSO FAILED code=${err.code ?? "?"} msg="${err.message ?? "?"}" after ${dt}ms`,
+        );
+        console.error("[sso-legacy] failed", err);
+      }
+    },
+  );
+}
+
+async function testCallbackToken() {
+  pushLog("info", "EWS Callback Token: invoking mailbox.getCallbackTokenAsync");
+  const mailbox = Office?.context?.mailbox;
+  if (!mailbox || typeof mailbox.getCallbackTokenAsync !== "function") {
+    pushLog("warn", "Office.context.mailbox.getCallbackTokenAsync not present");
+    return;
+  }
+  return new Promise((resolve) => {
+    mailbox.getCallbackTokenAsync({ isRest: true }, (result) => {
+      if (result?.status === "succeeded") {
+        const preview = String(result.value ?? "").slice(0, 24);
+        pushLog("success", `EWS callback token acquired (preview=${preview}...)`);
+        console.info("[callback-token] succeeded", preview);
+      } else {
+        pushLog(
+          "error",
+          `EWS callback token failed code=${result?.error?.code ?? "?"} msg="${result?.error?.message ?? "?"}"`,
+        );
+      }
+      resolve();
+    });
+  });
+}
+
+function reloadPane() {
+  pushLog("info", "Reloading iframe");
+  try {
+    if (typeof Office?.context?.ui?.setTrainingAssistanceUrl === "function") {
+      // some hosts don't expose iframe reload — try a soft reload
+    }
+    window.location.reload();
+  } catch (e) {
+    pushLog("error", `reload failed: ${e?.message ?? e}`);
+  }
+}
+
 async function copyLogToClipboard() {
   if (!logEl) return;
   const lines = Array.from(logEl.querySelectorAll("li")).map(
@@ -111,6 +183,15 @@ if (testSsoBtn) {
 }
 if (testSsoBareBtn) {
   testSsoBareBtn.addEventListener("click", testSsoBareOnly);
+}
+if (testLegacySsoBtn) {
+  testLegacySsoBtn.addEventListener("click", testLegacySso);
+}
+if (testCallbackTokenBtn) {
+  testCallbackTokenBtn.addEventListener("click", () => { testCallbackToken(); });
+}
+if (reloadPaneBtn) {
+  reloadPaneBtn.addEventListener("click", reloadPane);
 }
 if (copyLogBtn) {
   copyLogBtn.addEventListener("click", copyLogToClipboard);
@@ -506,19 +587,53 @@ async function retryOne(idx) {
   renderResults();
 }
 
+function dumpHostFingerprint() {
+  try {
+    const diags = Office.context?.mailbox?.diagnostics ?? {};
+    const reqs = Office.context?.requirements ?? null;
+    const ctxAuth = Office.context?.auth ?? null;
+    const keys = (obj) =>
+      obj == null
+        ? "null"
+        : Array.isArray(obj)
+          ? "array"
+          : `Object{${Object.keys(obj).join(",")}}`;
+    pushLog("meta", `navigator.userAgent=${navigator.userAgent}`);
+    pushLog("meta", `navigator.platform=${navigator.platform}`);
+    pushLog("meta", `info.platform=${Office.context?.mailbox?.diagnostics?.hostName ?? "?"}`);
+    pushLog("meta", `Office.context.host=${Office.context?.host ?? "?"}`);
+    pushLog("meta", `Office.onReady keys=${Object.keys(info ?? {}).join(",") || "(none)"}`);
+    pushLog(
+      "meta",
+      `diagnostics keys=${keys(diags)}; hostVersion=${diags?.hostVersion ?? "?"}; OWA version=${diags?.owaVersion ?? "?"}`,
+    );
+    if (reqs) {
+      const setNames = Array.isArray(reqs)
+        ? reqs
+        : Object.getOwnPropertyNames(reqs ?? {});
+      pushLog("meta", `context.requirements keys=${setNames.join(",") || "(none)"}`);
+    } else {
+      pushLog("meta", "context.requirements not present");
+    }
+    pushLog(
+      "meta",
+      `legacy Office.context.auth present: ${ctxAuth != null}; has getAccessToken: ${typeof ctxAuth?.getAccessToken === "function"}`,
+    );
+    pushLog(
+      "meta",
+      `mailbox.getCallbackTokenAsync: ${typeof Office.context?.mailbox?.getCallbackTokenAsync === "function"}`,
+    );
+  } catch (e) {
+    pushLog("error", `dumpHostFingerprint threw: ${e?.message ?? e}`);
+  }
+}
+
 Office.onReady((info) => {
   pushLog(
     "info",
     `Office.onReady host=${info.host} platform=${info.platform ?? "?"}`,
   );
-  pushLog(
-    "info",
-    `Office.context.host=${Office.context?.host ?? "?"}`,
-  );
-  pushLog(
-    "info",
-    `hostName=${Office.context?.mailbox?.diagnostics?.hostName ?? "?"}`,
-  );
+  dumpHostFingerprint();
   pushLog(
     "info",
     `auth.getAccessToken available: ${typeof Office?.auth?.getAccessToken === "function"}`,

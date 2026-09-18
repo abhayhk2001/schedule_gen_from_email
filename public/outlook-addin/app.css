@@ -401,6 +401,7 @@ button.primary.create:disabled {
 .debug-actions {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .debug-btn {

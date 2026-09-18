@@ -48,6 +48,15 @@
             <button id="test-sso-bare-btn" class="debug-btn" type="button" title="getAccessToken WITHOUT forMSGraphAccess. Use to isolate whether the hang is in the Graph SSO step.">
               Test SSO (no Graph)
             </button>
+            <button id="test-legacy-sso-btn" class="debug-btn" type="button" title="Use legacy Office.context.auth.getAccessToken if present. Useful on Mac legacy Outlook.">
+              Legacy SSO
+            </button>
+            <button id="test-callback-token-btn" class="debug-btn" type="button" title="Use Office.context.mailbox.getCallbackTokenAsync for an EWS callback token (Exchange-only path; works on legacy Mac).">
+              EWS Callback Token
+            </button>
+            <button id="reload-pane-btn" class="debug-btn" type="button" title="Reload the add-in iframe (sometimes clears stuck dialogs on Mac).">
+              Reload pane
+            </button>
             <button id="copy-log-btn" class="debug-btn" type="button" title="Copy log entries to clipboard">
               Copy log
             </button>
