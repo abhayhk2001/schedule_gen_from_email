@@ -1,3 +1,5 @@
+import { initTheme, setThemeOverride, effectiveMode } from "./theme.js";
+
 const $ = (id) => document.getElementById(id);
 
 const btn = $("extract-btn");
@@ -5,9 +7,36 @@ const createBtn = $("create-btn");
 const status = $("status");
 const results = $("results");
 const eventsEl = $("events");
+const themeBtn = $("theme-toggle");
+const themeIcon = $("theme-icon");
 
 const GRAPH_RESOURCE = "https://graph.microsoft.com";
 const GRAPH_DEFAULT_SCOPES = ["openid", "profile", "offline_access", "User.Read", "Calendars.ReadWrite"];
+
+const SUN_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m4.93 19.07 1.41-1.41"/><path d="m17.66 6.34 1.41-1.41"/></svg>';
+const MOON_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+
+function paintThemeButton() {
+  if (!themeBtn || !themeIcon) return;
+  const mode = effectiveMode();
+  const isDark = mode === "dark";
+  themeIcon.innerHTML = isDark ? SUN_SVG : MOON_SVG;
+  themeBtn.setAttribute("aria-label", isDark ? "Switch to light theme" : "Switch to dark theme");
+  themeBtn.title = isDark ? "Switch to light" : "Switch to dark";
+}
+
+function onThemeToggleClick() {
+  const next = effectiveMode() === "dark" ? "light" : "dark";
+  setThemeOverride(next);
+  paintThemeButton();
+}
+
+if (themeBtn) {
+  themeBtn.addEventListener("click", onThemeToggleClick);
+  paintThemeButton();
+}
 
 const state = {
   events: [],
@@ -339,6 +368,9 @@ async function retryOne(idx) {
 
 Office.onReady((info) => {
   if (info.host !== Office.HostType.Outlook) return;
+
+  initTheme();
+  paintThemeButton();
 
   btn.disabled = false;
   btn.addEventListener("click", async () => {
