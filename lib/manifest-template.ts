@@ -6,11 +6,11 @@ export const MANIFEST_TEMPLATE = `<?xml version="1.0" encoding="UTF-8" standalon
   xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
   xsi:type="MailApp">
   <Id>9c2bf2d8-7a3e-4f11-b8d6-2e8f9b4c1a25</Id>
-  <Version>1.3.0.0</Version>
+  <Version>1.3.0.1</Version>
   <ProviderName>Email Event Extractor</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="Email Event Extractor"/>
-  <Description DefaultValue="Extract calendar events from the email you're viewing using AI."/>
+  <DisplayName DefaultValue="Add Cal Event"/>
+  <Description DefaultValue="Extract calendar events from the email you're viewing and add them to your calendar."/>
   <IconUrl DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-64.png"/>
   <HighResolutionIconUrl DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/assets/icon-128.png"/>
   <SupportUrl DefaultValue="https://schedule-gen-from-email.vercel.app/"/>
@@ -91,12 +91,12 @@ export const MANIFEST_TEMPLATE = `<?xml version="1.0" encoding="UTF-8" standalon
         <bt:Url id="taskpaneUrl" DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/index.html"/>
       </bt:Urls>
       <bt:ShortStrings>
-        <bt:String id="groupLabel"   DefaultValue="Email Events"/>
+        <bt:String id="groupLabel"   DefaultValue="Add Cal Event"/>
         <bt:String id="buttonLabel"  DefaultValue="Extract Events"/>
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="longDescription" DefaultValue="Extract calendar events from the email you're viewing using AI."/>
-        <bt:String id="buttonTooltip"    DefaultValue="Reads this email's subject, sender, and body, and extracts calendar events via the Email Event Extractor API."/>
+        <bt:String id="buttonTooltip"    DefaultValue="Reads this email's subject, sender, and body, and extracts calendar events via the Add Cal Event API."/>
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>
@@ -153,12 +153,12 @@ export const MANIFEST_TEMPLATE = `<?xml version="1.0" encoding="UTF-8" standalon
         <bt:Url id="taskpaneUrl" DefaultValue="https://schedule-gen-from-email.vercel.app/outlook-addin/index.html"/>
       </bt:Urls>
       <bt:ShortStrings>
-        <bt:String id="groupLabel"   DefaultValue="Email Events"/>
+        <bt:String id="groupLabel"   DefaultValue="Add Cal Event"/>
         <bt:String id="buttonLabel"  DefaultValue="Extract Events"/>
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="longDescription" DefaultValue="Extract calendar events from the email you're viewing using AI."/>
-        <bt:String id="buttonTooltip"    DefaultValue="Reads this email's subject, sender, and body, and extracts calendar events via the Email Event Extractor API."/>
+        <bt:String id="buttonTooltip"    DefaultValue="Reads this email's subject, sender, and body, and extracts calendar events via the Add Cal Event API."/>
       </bt:LongStrings>
     </Resources>
 
