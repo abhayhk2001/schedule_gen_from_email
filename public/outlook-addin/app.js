@@ -9,6 +9,42 @@ const results = $("results");
 const eventsEl = $("events");
 const themeBtn = $("theme-toggle");
 const themeIcon = $("theme-icon");
+const debugSection = $("debug");
+const logEl = $("log");
+const testSsoBtn = $("test-sso-btn");
+const copyLogBtn = $("copy-log-btn");
+const clearLogBtn = $("clear-log-btn");
+
+function nowStamp() {
+  return new Date().toISOString().slice(11, 23);
+}
+
+function pushLog(level, text) {
+  if (!debugSection || !logEl) return;
+  debugSection.classList.remove("hidden");
+  const li = document.createElement("li");
+  li.className = `lvl-${level}`;
+  const ts = document.createElement("span");
+  ts.className = "ts";
+  ts.textContent = nowStamp();
+  const body = document.createElement("span");
+  body.textContent = text;
+  li.appendChild(ts);
+  li.appendChild(body);
+  logEl.appendChild(li);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+pushLog("meta", "debug panel ready");
+pushLog("meta", `Office host: ${typeof Office !== "undefined" ? Office.context?.host ?? "unknown" : "Office.js not loaded"}`);
+pushLog(
+  "meta",
+  `auth.getAccessToken available: ${typeof Office?.auth?.getAccessToken === "function"}`,
+);
+pushLog(
+  "meta",
+  `host name: ${typeof Office !== "undefined" ? Office.context?.mailbox?.diagnostics?.hostName ?? "?" : "?"}`,
+);
 
 const GRAPH_RESOURCE = "https://graph.microsoft.com";
 const GRAPH_DEFAULT_SCOPES = ["openid", "profile", "offline_access", "User.Read", "Calendars.ReadWrite"];
@@ -36,6 +72,43 @@ function onThemeToggleClick() {
 if (themeBtn) {
   themeBtn.addEventListener("click", onThemeToggleClick);
   paintThemeButton();
+}
+
+async function testSsoOnly() {
+  pushLog("info", "Test SSO: invoking getAccessToken (no Graph POST)");
+  try {
+    await getGraphToken(GRAPH_DEFAULT_SCOPES);
+    pushLog("success", "Test SSO: completed without error");
+  } catch (err) {
+    pushLog("error", `Test SSO: ${err?.message ?? String(err)}`);
+  }
+}
+
+async function copyLogToClipboard() {
+  if (!logEl) return;
+  const lines = Array.from(logEl.querySelectorAll("li")).map(
+    (li) => `${li.querySelector(".ts")?.textContent ?? ""} ${li.textContent.replace(/^\S+\s*/, "")}`.trim(),
+  );
+  const text = lines.join("\n");
+  try {
+    await navigator.clipboard.writeText(text);
+    pushLog("meta", "log copied to clipboard");
+  } catch (err) {
+    pushLog("warn", `clipboard unavailable: ${err?.message ?? err}`);
+  }
+}
+
+if (testSsoBtn) {
+  testSsoBtn.addEventListener("click", testSsoOnly);
+}
+if (copyLogBtn) {
+  copyLogBtn.addEventListener("click", copyLogToClipboard);
+}
+if (clearLogBtn) {
+  clearLogBtn.addEventListener("click", () => {
+    while (logEl?.firstChild) logEl.removeChild(logEl.firstChild);
+    pushLog("meta", "log cleared");
+  });
 }
 
 const state = {
@@ -134,9 +207,15 @@ function mapToGraphFields(ev) {
 function getGraphToken(scopes) {
   return new Promise((resolve, reject) => {
     if (!Office?.auth?.getAccessToken) {
+      pushLog("error", "Office.auth.getAccessToken is not available in this host");
       reject(new Error("Office.auth.getAccessToken is not available in this host."));
       return;
     }
+    pushLog(
+      "info",
+      `getAccessToken requested with scopes: ${scopes.join(", ")}`,
+    );
+    pushLog("info", `forMSGraphAccess=true, allowConsentPrompt=true`);
     Office.auth.getAccessToken(
       {
         allowSignInPrompt: true,
@@ -146,11 +225,29 @@ function getGraphToken(scopes) {
         scopes,
       },
       (result) => {
+        pushLog(
+          "info",
+          `getAccessToken callback status=${result.status}`,
+        );
         if (result.status === "succeeded") {
+          const preview = String(result.value ?? "").slice(0, 24);
+          pushLog("success", `token acquired (preview: ${preview}...)`);
           resolve(result.value);
         } else {
-          const code = result.error?.code ?? result.error?.message ?? "unknown";
-          reject(new Error(`SSO error (${code}): ${result.error?.message ?? "Failed to acquire token"}`));
+          const err = result.error ?? {};
+          const code = err.code ?? "?";
+          const name = err.name ?? "";
+          const message = err.message ?? "Failed to acquire token";
+          const trace = Array.isArray(err.traceMessages)
+            ? ` | trace: ${err.traceMessages.join(" / ")}`
+            : "";
+          pushLog(
+            "error",
+            `getAccessToken FAILED code=${code} name=${name || "?"} msg="${message}"${trace}`,
+          );
+          reject(
+            new Error(`SSO error (${code}): ${message}${trace}`),
+          );
         }
       },
     );
@@ -161,16 +258,26 @@ async function createGraphEvent(ev, { retry = true } = {}) {
   const event = mapToGraphFields(ev);
   const token = await getGraphToken(GRAPH_DEFAULT_SCOPES);
 
-  const resp = await fetch(`${GRAPH_RESOURCE}/v1.0/me/events`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(event),
-  });
+  pushLog("info", `POST ${GRAPH_RESOURCE}/v1.0/me/events`);
+  let resp;
+  try {
+    resp = await fetch(`${GRAPH_RESOURCE}/v1.0/me/events`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(event),
+    });
+  } catch (err) {
+    pushLog("error", `Graph POST network error: ${err?.message ?? String(err)}`);
+    throw err;
+  }
+
+  pushLog("info", `Graph response status=${resp.status}`);
 
   if (resp.status === 401 && retry) {
+    pushLog("warn", "Graph returned 401; clearing token cache and retrying once");
     return createGraphEvent(ev, { retry: false });
   }
 
@@ -178,10 +285,15 @@ async function createGraphEvent(ev, { retry = true } = {}) {
     const payload = await resp.json().catch(() => ({}));
     const code = payload?.error?.code ?? `HTTP ${resp.status}`;
     const message = payload?.error?.message ?? resp.statusText;
+    pushLog(
+      "error",
+      `Graph error code=${code} message="${message}"`,
+    );
     throw new Error(`${code}: ${message}`);
   }
 
   const data = await resp.json();
+  pushLog("success", `Graph event created id=${data.id ?? "?"}`);
   return { itemId: data.id ?? null, webLink: data.webLink ?? null };
 }
 

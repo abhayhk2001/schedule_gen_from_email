@@ -37,6 +37,24 @@
         <h2 id="results-heading">Events</h2>
         <div id="events"></div>
       </section>
+
+      <section id="debug" class="debug hidden" aria-label="Debug log">
+        <header class="debug-head">
+          <h2>Debug</h2>
+          <div class="debug-actions">
+            <button id="test-sso-btn" class="debug-btn" type="button" title="Call getAccessToken only; no Graph POST">
+              Test SSO
+            </button>
+            <button id="copy-log-btn" class="debug-btn" type="button" title="Copy log entries to clipboard">
+              Copy log
+            </button>
+            <button id="clear-log-btn" class="debug-btn" type="button" title="Clear log">
+              Clear
+            </button>
+          </div>
+        </header>
+        <ol id="log" class="log"></ol>
+      </section>
     </main>
 
     <script type="module" src="app.js"></script>
