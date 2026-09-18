@@ -587,7 +587,7 @@ async function retryOne(idx) {
   renderResults();
 }
 
-function dumpHostFingerprint() {
+function dumpHostFingerprint(info) {
   try {
     const diags = Office.context?.mailbox?.diagnostics ?? {};
     const reqs = Office.context?.requirements ?? null;
@@ -600,18 +600,31 @@ function dumpHostFingerprint() {
           : `Object{${Object.keys(obj).join(",")}}`;
     pushLog("meta", `navigator.userAgent=${navigator.userAgent}`);
     pushLog("meta", `navigator.platform=${navigator.platform}`);
-    pushLog("meta", `info.platform=${Office.context?.mailbox?.diagnostics?.hostName ?? "?"}`);
-    pushLog("meta", `Office.context.host=${Office.context?.host ?? "?"}`);
-    pushLog("meta", `Office.onReady keys=${Object.keys(info ?? {}).join(",") || "(none)"}`);
     pushLog(
       "meta",
-      `diagnostics keys=${keys(diags)}; hostVersion=${diags?.hostVersion ?? "?"}; OWA version=${diags?.owaVersion ?? "?"}`,
+      `info.platform=${info?.platform ?? "?"}; info.host=${info?.host ?? "?"}`,
+    );
+    pushLog(
+      "meta",
+      `hostName=${Office.context?.mailbox?.diagnostics?.hostName ?? "?"} | OWA version=${Office.context?.mailbox?.diagnostics?.owaVersion ?? "?"}`,
+    );
+    pushLog("meta", `Office.context.host=${Office.context?.host ?? "?"}`);
+    pushLog(
+      "meta",
+      `Office.onReady info keys=${keys(info)}`,
+    );
+    pushLog(
+      "meta",
+      `diagnostics keys=${keys(diags)}; hostVersion=${diags?.hostVersion ?? "?"}`,
     );
     if (reqs) {
       const setNames = Array.isArray(reqs)
         ? reqs
         : Object.getOwnPropertyNames(reqs ?? {});
-      pushLog("meta", `context.requirements keys=${setNames.join(",") || "(none)"}`);
+      pushLog(
+        "meta",
+        `context.requirements=${Array.isArray(reqs) ? "array" : "object"} keys=${setNames.join(",") || "(none)"}`,
+      );
     } else {
       pushLog("meta", "context.requirements not present");
     }
@@ -623,6 +636,13 @@ function dumpHostFingerprint() {
       "meta",
       `mailbox.getCallbackTokenAsync: ${typeof Office.context?.mailbox?.getCallbackTokenAsync === "function"}`,
     );
+    const ua = navigator.userAgent ?? "";
+    const isWebKitOnly = /AppleWebKit\/605\./.test(ua) && !/Chrome|Chromium|Edge/.test(ua);
+    const isLegacyMacOutlook = /Macintosh; Intel Mac OS X 10_15/.test(ua);
+    pushLog(
+      isLegacyMacOutlook ? "warn" : "info",
+      `host fingerprint: legacyMacOutlookWebView=${isWebKitOnly && isLegacyMacOutlook}; newOutlook=${/Chrome\/.*Macintosh/.test(ua)}`,
+    );
   } catch (e) {
     pushLog("error", `dumpHostFingerprint threw: ${e?.message ?? e}`);
   }
@@ -633,7 +653,21 @@ Office.onReady((info) => {
     "info",
     `Office.onReady host=${info.host} platform=${info.platform ?? "?"}`,
   );
-  dumpHostFingerprint();
+  dumpHostFingerprint(info);
+
+  // Detect legacy Mac Outlook from user-agent *after* fingerprint so the
+  // fingerprint lines are visible even when warning.
+  try {
+    const ua = navigator.userAgent ?? "";
+    const legacyMac =
+      /AppleWebKit\/605\./.test(ua) && !/Chrome|Chromium|Edge/.test(ua);
+    if (legacyMac) {
+      pushLog(
+        "warn",
+        "WebView is WebKit 605.x with no Chromium signal — this is **Legacy Mac Outlook**. Office.auth.getAccessToken is unimplemented in this host and the call will hang. Switch to **New Outlook for Mac** (Mail → Window → Switch to New Outlook, or upgrade Office to 16.41+ on macOS 12+), or send the manifest URL to Outlook on the web to install instead.",
+      );
+    }
+  } catch {}
   pushLog(
     "info",
     `auth.getAccessToken available: ${typeof Office?.auth?.getAccessToken === "function"}`,
