@@ -494,3 +494,61 @@ Failures are reported per event. A failed row stays in the list with its
 error message and a **Retry** button; successful rows show **"Created —
 open your Outlook calendar to view"**. One failure does not block the
 others.
+
+## Theming
+
+### Add-in pane (`public/outlook-addin/`)
+
+The pane paints **dark** by default and replaces its tokens with the
+host's Office palette as soon as `Office.context.officeTheme` resolves.
+On `Office.EventType.ThemeChanged` the same swap repeats, so the pane
+re-themes instantly when the user switches Office themes (Office,
+Office on the web, dark gray, black, high-contrast).
+
+Source of truth: `public/outlook-addin/theme.js`. It writes the
+following CSS variables to `:root`:
+
+| Variable         | Comes from                       |
+|------------------|----------------------------------|
+| `--bg`           | `bodyBackgroundColor`            |
+| `--fg`           | `bodyForegroundColor`            |
+| `--surface`      | `controlBackgroundColor`         |
+| `--surface-fg`   | `controlForegroundColor`         |
+| `--border`       | `controlBorderColor`             |
+| `--accent`       | `accent1`                        |
+| `--accent-hover` | accent1 × 0.85 each channel      |
+| `--accent-on`    | white or black by RGB luminance  |
+| `--accent-soft`  | accent1 @ 18% alpha              |
+
+The emerald `--success-fg` / `--success-fg-strong` / `--success-bg`
+ramp is **not** derived from the Office accent — it is fixed at
+`#047857` / `#059669` so the *Create in calendar* button and the
+success pill stay visually consistent regardless of theme.
+
+### Manual override
+
+A sun/moon toggle in the pane header overrides Office's theme. The
+choice is stored under `localStorage["addCalEvent.themeOverride"]` as
+`"light"` or `"dark"`. While set:
+
+- The pane ignores `Office.EventType.ThemeChanged`.
+- The value is reconciled across multiple open panes via the
+  `storage` event.
+- Clearing it from DevTools (`localStorage.removeItem(...)`)
+  hands control back to Office.
+
+### Landing page (`public/`)
+
+`public/site.css` uses `@media (prefers-color-scheme: dark)` so the
+page flips when the user's OS appearance changes — no JS. The token
+list mirrors the add-in's; gradient logo, code block, cards, inputs,
+buttons, status pills all flow from the same variables.
+
+| Token override lives in | Trigger |
+|-------------------------|---------|
+| `:root` (light)         | default                                |
+| `@media (prefers-color-scheme: dark)` in `site.css` | when the user's OS reports dark |
+
+`<meta name="color-scheme" content="light dark">` in `public/index.html`
+makes the browser's address bar and native form controls follow the
+active theme.
