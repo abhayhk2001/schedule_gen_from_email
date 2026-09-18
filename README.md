@@ -22,8 +22,7 @@ endpoint.
 ```
 .
 ├── api/
-│   ├── extract-event.ts     # POST /api/extract-event handler
-│   └── manifest.xml.ts      # GET /api/manifest.xml — Outlook manifest with AZURE_CLIENT_ID injected from env
+│   └── extract-event.ts     # POST /api/extract-event handler
 ├── lib/
 │   ├── router.ts            # picks provider based on requested model
 │   ├── openai.ts            # OpenAI extraction (gpt-4o-mini)
@@ -350,7 +349,7 @@ renders the returned events.
 4. Paste:
 
    ```
-   https://schedule-gen-from-email.vercel.app/api/manifest.xml
+https://schedule-gen-from-email.vercel.app/outlook-addin/manifest.xml
    ```
 
 5. Click **Install**, accept the permission prompt (`ReadItem`).
@@ -364,18 +363,37 @@ renders the returned events.
 2. Click **+ Add a custom add-in** → **Add from File…** (the on-the-web
    flow only allows URL-based manifests in newer builds; for desktop you may
    need to download the manifest to disk first via
-   `https://schedule-gen-from-email.vercel.app/api/manifest.xml`).
+   `https://schedule-gen-from-email.vercel.app/outlook-addin/manifest.xml`).
 
 ### Files
 
 | Path | Purpose |
 |------|---------|
-| `api/manifest.xml.ts` | Vercel route that serves the Outlook manifest with `AZURE_CLIENT_ID` injected at request time. |
 | `lib/manifest-template.ts` | Manifest XML template (single source of truth). Contains the `__AZURE_CLIENT_ID__` placeholder. |
+| `scripts/build-manifest.mjs` | Pre-build step that substitutes `$AZURE_CLIENT_ID` into the template and writes `public/outlook-addin/manifest.xml`. |
+| `public/outlook-addin/manifest.xml` | Generated at build time, served as a static asset at `/outlook-addin/manifest.xml`. Gitignored. |
 | `public/outlook-addin/index.html` | Task-pane UI. |
 | `public/outlook-addin/app.js` | Office.js + fetch logic. |
 | `public/outlook-addin/app.css` | Card styling. |
 | `public/outlook-addin/assets/` | PNG icons (16/32/64/80/128). Replace with your real logo. |
+
+### How the manifest reaches users
+
+`scripts/build-manifest.mjs` runs on every Vercel deploy via the
+`buildCommand` in `vercel.json`. It reads `AZURE_CLIENT_ID` from the
+project environment and writes a fully-rendered XML file into
+`public/outlook-addin/manifest.xml`. The browser and Outlook both
+fetch that file directly — no server function, no runtime rewrite.
+Because the env var is read **at build time**, it must be set as
+**Config** (not Secret) in the Vercel dashboard:
+
+```bash
+vercel env add AZURE_CLIENT_ID production --type config
+# paste your Azure client GUID when prompted
+```
+
+Client IDs are public identifiers (Microsoft's docs say so
+explicitly), so plaintext storage here is safe.
 
 ### Limitations / next steps
 
@@ -458,26 +476,34 @@ clicking **Create**. Each row becomes its own Outlook event.
 
 ### Manifest wiring
 
-`lib/manifest-template.ts` carries the XML shipped by `api/manifest.xml.ts`:
+`lib/manifest-template.ts` is the single source of truth. It is
+rendered to `public/outlook-addin/manifest.xml` at build time by
+`scripts/build-manifest.mjs` (invoked via Vercel's `buildCommand` in
+`vercel.json`). The file is served as a static asset — no server
+function, no runtime rewrite.
 
-- A `VersionOverridesV1_1` block (required for SSO).
+The manifest contains:
+
+- A `<VersionOverrides xsi:type="VersionOverridesV1_1">` **nested inside**
+  the V1_0 block — required by the schema; the validator at
+  `npx office-addin-validator` reports `Validation: Passed`.
 - `<Permissions>ReadWriteItem</Permissions>` — the Office API surface we
   use is just reading the current message; `ReadWriteMailbox` is no
   longer needed.
 - `<WebApplicationInfo>` with the Azure client ID, Application ID URI,
   and the five Graph scopes listed above.
 
-The real client ID is **never committed to the repo**. Set the
-`AZURE_CLIENT_ID` environment variable so the API route can substitute it
-into the `__AZURE_CLIENT_ID__` placeholder at request time:
+The real client ID is **never committed to the repo**. Set it as a
+**plain config** env var so the build step can read it:
 
 ```bash
-vercel env add AZURE_CLIENT_ID production   # paste your GUID when prompted
+vercel env add AZURE_CLIENT_ID production --type config
+# paste your Azure client GUID when prompted
 ```
 
-Bump the `Version` in `lib/manifest-template.ts` when you change the
-manifest. Without `AZURE_CLIENT_ID` the route returns `503` so the
-absence is loud, not silent.
+If the env var is missing the build fails with a clear message — the
+absence is loud, not silent. Bump the `Version` in
+`lib/manifest-template.ts` when you change the manifest.
 
 ### Required permission
 

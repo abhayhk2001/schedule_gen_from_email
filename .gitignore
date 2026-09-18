@@ -7,3 +7,8 @@ node_modules
 dist
 *.log
 .DS_Store
+
+# Generated at Vercel build time by scripts/build-manifest.mjs.
+# The Azure client ID is injected from $AZURE_CLIENT_ID so this file
+# is environment-specific and never committed.
+public/outlook-addin/manifest.xml

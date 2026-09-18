@@ -1,8 +1,9 @@
 {
+  "buildCommand": "node scripts/build-manifest.mjs",
   "rewrites": [
     {
       "source": "/api/manifest.xml",
-      "destination": "/api/manifest"
+      "destination": "/outlook-addin/manifest.xml"
     }
   ]
 }
