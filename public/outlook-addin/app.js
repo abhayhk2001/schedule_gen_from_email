@@ -6,6 +6,9 @@ const status = $("status");
 const results = $("results");
 const eventsEl = $("events");
 
+const GRAPH_RESOURCE = "https://graph.microsoft.com";
+const GRAPH_DEFAULT_SCOPES = ["openid", "profile", "offline_access", "User.Read", "Calendars.ReadWrite"];
+
 const state = {
   events: [],
   removed: new Set(),
@@ -33,15 +36,6 @@ function escapeHtml(s) {
   }[c]));
 }
 
-function escapeXml(s) {
-  return String(s ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
 function formatTime(ev) {
   if (ev.whole_day) return "All day";
   const start = ev.time ?? "?";
@@ -67,85 +61,107 @@ function addDaysToISO(yyyymmdd, days) {
   return d.toISOString().slice(0, 10);
 }
 
-function mapToEwsFields(ev) {
+function getLocalTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+function mapToGraphFields(ev) {
   const subject = ev.event_name || "Untitled event";
   const body = ev.description || "";
+  const timeZone = ev.timezone || getLocalTimeZone();
+
   if (ev.whole_day) {
     return {
       subject,
-      body,
-      start: ev.date,
-      end: ev.end_date || addDaysToISO(ev.date, 1),
+      body: { contentType: "Text", content: body },
+      start: { dateTime: ev.date, timeZone },
+      end: {
+        dateTime: ev.end_date || addDaysToISO(ev.date, 1),
+        timeZone,
+      },
       isAllDay: true,
     };
   }
+
+  const startTime = ev.time || "00:00";
+  const endTime = ev.end_time || addHoursToHHMM(startTime, 1);
+
   return {
     subject,
-    body,
-    start: `${ev.date}T${ev.time}:00`,
-    end: `${ev.end_date || ev.date}T${
-      ev.end_time || addHoursToHHMM(ev.time || "00:00", 1)
-    }:00`,
+    body: { contentType: "Text", content: body },
+    start: { dateTime: `${ev.date}T${startTime}:00`, timeZone },
+    end: {
+      dateTime: `${ev.end_date || ev.date}T${endTime}:00`,
+      timeZone,
+    },
     isAllDay: false,
   };
 }
 
-function buildEwsCreateCalendarItemXml(item) {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<soap:Envelope
-  xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-  xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
-  xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
-  <soap:Header>
-    <t:RequestServerVersion Version="V2_0"/>
-  </soap:Header>
-  <soap:Body>
-    <m:CreateItem SendMeetingInvitations="SendToNone">
-      <m:SavedItemFolderId>
-        <t:DistinguishedFolderId Id="calendar"/>
-      </m:SavedItemFolderId>
-      <m:Items>
-        <t:CalendarItem>
-          <t:Subject>${escapeXml(item.subject)}</t:Subject>
-          <t:Body BodyType="Text">${escapeXml(item.body)}</t:Body>
-          <t:Start>${item.start}</t:Start>
-          <t:End>${item.end}</t:End>
-          <t:IsAllDayEvent>${item.isAllDay}</t:IsAllDayEvent>
-        </t:CalendarItem>
-      </m:Items>
-    </m:CreateItem>
-  </soap:Body>
-</soap:Envelope>`;
-}
-
-function makeEwsRequest(xml) {
+function getGraphToken(scopes) {
   return new Promise((resolve, reject) => {
-    Office.context.mailbox.makeEwsRequestAsync(xml, (result) => {
-      if (result.status === Office.AsyncResultStatus.Succeeded) {
-        resolve(result.value);
-      } else {
-        const code =
-          result.error?.code ?? result.error?.message ?? "unknown";
-        reject(new Error(`EWS error (${code})`));
-      }
-    });
+    if (!Office?.auth?.getAccessToken) {
+      reject(new Error("Office.auth.getAccessToken is not available in this host."));
+      return;
+    }
+    Office.auth.getAccessToken(
+      {
+        allowSignInPrompt: true,
+        allowConsentPrompt: true,
+        allowMultipleSignInPrompt: false,
+        forMSGraphAccess: true,
+        scopes,
+      },
+      (result) => {
+        if (result.status === "succeeded") {
+          resolve(result.value);
+        } else {
+          const code = result.error?.code ?? result.error?.message ?? "unknown";
+          reject(new Error(`SSO error (${code}): ${result.error?.message ?? "Failed to acquire token"}`));
+        }
+      },
+    );
   });
 }
 
-async function createCalendarItem(ev) {
-  const item = mapToEwsFields(ev);
-  const xml = buildEwsCreateCalendarItemXml(item);
-  const responseXml = await makeEwsRequest(xml);
-  const idMatch = responseXml.match(/<t:ItemId\s+Id="([^"]+)"/);
-  return { itemId: idMatch ? idMatch[1] : null };
+async function createGraphEvent(ev, { retry = true } = {}) {
+  const event = mapToGraphFields(ev);
+  const token = await getGraphToken(GRAPH_DEFAULT_SCOPES);
+
+  const resp = await fetch(`${GRAPH_RESOURCE}/v1.0/me/events`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(event),
+  });
+
+  if (resp.status === 401 && retry) {
+    return createGraphEvent(ev, { retry: false });
+  }
+
+  if (!resp.ok) {
+    const payload = await resp.json().catch(() => ({}));
+    const code = payload?.error?.code ?? `HTTP ${resp.status}`;
+    const message = payload?.error?.message ?? resp.statusText;
+    throw new Error(`${code}: ${message}`);
+  }
+
+  const data = await resp.json();
+  return { itemId: data.id ?? null, webLink: data.webLink ?? null };
 }
 
 async function createEvents(events) {
   const results = [];
   for (const ev of events) {
     try {
-      const { itemId } = await createCalendarItem(ev);
-      results.push({ ev, status: "success", itemId });
+      const { itemId, webLink } = await createGraphEvent(ev);
+      results.push({ ev, status: "success", itemId, webLink });
     } catch (err) {
       results.push({ ev, status: "error", error: err?.message ?? String(err) });
     }
@@ -276,6 +292,14 @@ function renderResults() {
       note.className = "desc";
       note.textContent = "Created — open your Outlook calendar to view.";
       body.appendChild(note);
+      if (r.webLink) {
+        const link = document.createElement("a");
+        link.href = r.webLink;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "Open in Outlook on the web";
+        body.appendChild(link);
+      }
     } else if (r.status === "error") {
       const err = document.createElement("p");
       err.className = "error-text";
@@ -301,8 +325,8 @@ async function retryOne(idx) {
   state.results[idx] = { ev: r.ev, status: "pending" };
   renderResults();
   try {
-    const { itemId } = await createCalendarItem(r.ev);
-    state.results[idx] = { ev: r.ev, status: "success", itemId };
+    const { itemId, webLink } = await createGraphEvent(r.ev);
+    state.results[idx] = { ev: r.ev, status: "success", itemId, webLink };
   } catch (err) {
     state.results[idx] = {
       ev: r.ev,

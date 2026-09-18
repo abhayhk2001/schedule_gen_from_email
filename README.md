@@ -37,6 +37,9 @@ endpoint.
 │   ├── providers.test.ts    # missing-key ConfigError tests
 │   └── extract.test.ts      # runExtraction helper tests
 ├── public/
+│   ├── index.html           # landing page at the deployment root
+│   ├── site.css             # styles for the landing page
+│   ├── site.js              # calls /api/extract-event from the landing page
 │   └── outlook-addin/       # Outlook Add-in (static files served by Vercel)
 │       ├── manifest.xml
 │       ├── index.html
@@ -73,7 +76,9 @@ endpoint.
    npx vercel dev
    ```
 
-   The function is available at `http://localhost:3000/api/extract-event`.
+   - The website is at `http://localhost:3000/`.
+   - The function is at `http://localhost:3000/api/extract-event`.
+   - The add-in source is at `http://localhost:3000/outlook-addin/`.
 
 ## Deploy
 
@@ -379,50 +384,41 @@ renders the returned events.
 After the events render, each card has a checkbox + **× remove** button, and
 the footer shows a green **"Create N events in calendar"** button.
 
-### Transport: EWS via `makeEwsRequestAsync`
+### Transport: Microsoft Graph via Office SSO
 
-The add-in uses Exchange Web Services (EWS) SOAP rather than the Microsoft
-Graph REST API. EWS is the canonical path for Outlook Add-in calendar
-operations and works on any Exchange-backed mailbox without requiring an
-Azure App Registration, manifest WebApplicationInfo, or admin consent.
+The add-in creates calendar events with Microsoft Graph, authenticated by
+the Office Add-in SSO flow (`Office.auth.getAccessToken` with
+`forMSGraphAccess: true`). The signed-in user's identity is reused — no
+separate sign-in, no token storage, and the Graph call is made directly
+from the add-in to `https://graph.microsoft.com/v1.0/me/events`.
 
-For each non-removed event, the add-in sends a `CreateItem` SOAP request:
+For each non-removed event, the add-in POSTs:
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<soap:Envelope xmlns:soap="..." xmlns:m="..." xmlns:t="...">
-  <soap:Header><t:RequestServerVersion Version="V2_0"/></soap:Header>
-  <soap:Body>
-    <m:CreateItem SendMeetingInvitations="SendToNone">
-      <m:SavedItemFolderId>
-        <t:DistinguishedFolderId Id="calendar"/>
-      </m:SavedItemFolderId>
-      <m:Items>
-        <t:CalendarItem>
-          <t:Subject>{event_name}</t:Subject>
-          <t:Body BodyType="Text">{description}</t:Body>
-          <t:Start>{date | date}T{time}:00</t:Start>
-          <t:End>{end_date | date}T{end_time | time+1h}:00</t:End>
-          <t:IsAllDayEvent>{true | false}</t:IsAllDayEvent>
-        </t:CalendarItem>
-      </m:Items>
-    </m:CreateItem>
-  </soap:Body>
-</soap:Envelope>
+```json
+POST https://graph.microsoft.com/v1.0/me/events
+Authorization: Bearer <SSO token>
+Content-Type: application/json
+
+{
+  "subject": "{event_name}",
+  "body": { "contentType": "Text", "content": "{description}" },
+  "start": { "dateTime": "{date}T{time}:00", "timeZone": "{tz}" },
+  "end":   { "dateTime": "{end_date}T{end_time}:00", "timeZone": "{tz}" },
+  "isAllDay": false
+}
 ```
 
-| API field | `whole_day` | EWS payload |
-|-----------|:-----------:|-------------|
-| All day | true | `<t:Start>{date}</t:Start>`, `<t:End>{end_date ?? date+1d}</t:End>`, `<t:IsAllDayEvent>true</t:IsAllDayEvent>` |
-| Timed | false | `<t:Start>{date}T{time}:00</t:Start>`, `<t:End>{end_date ?? date}T{end_time ?? time+1h}:00</t:End>`, `<t:IsAllDayEvent>false</t:IsAllDayEvent>` |
-| Both | — | `<t:Subject>{event_name}</t:Subject>`, `<t:Body BodyType="Text">{description}</t:Body>` |
+| API field        | `whole_day` | Graph payload                                                                                  |
+|------------------|:-----------:|------------------------------------------------------------------------------------------------|
+| All day          | true        | `start.dateTime: "{date}"`, `end.dateTime: "{end_date ?? date+1d}"`, `isAllDay: true`           |
+| Timed            | false       | `start.dateTime: "{date}T{time}:00"`, `end.dateTime: "{end_date ?? date}T{end_time ?? time+1h}:00"`, `isAllDay: false` |
+| Both (always)    | —           | `subject: "{event_name}"`, `body.contentType: "Text"`, `body.content: "{description}"`            |
 
 ### Fallback rules
 
 - Missing `end_time` on a timed event → end = start + 1 hour.
 - Missing `end_date` on a whole-day event → end = start + 1 day.
-- Missing `timezone` → server interprets Start/End in the mailbox's local
-  timezone.
+- Missing `timezone` → browser's IANA timezone via `Intl.DateTimeFormat`.
 
 ### Multi-day handling
 
@@ -430,26 +426,56 @@ For an email like *"Oct 10-20, 2026"* the API emits one entry per calendar
 day. The add-in shows all 11 rows; remove the ones you don't want before
 clicking **Create**. Each row becomes its own Outlook event.
 
-### Auth
+### Auth (Azure App Registration required)
 
-No setup required. `makeEwsRequestAsync` is provided by the Office Add-in
-runtime using the signed-in user's mailbox identity — no token, no Azure
-app.
+1. Register an app in **Microsoft Entra admin center** →
+   *Applications → App registrations → New registration*.
+   - **Name**: `Email Event Extractor` (or similar).
+   - **Supported account types**: *Accounts in this organizational
+     directory only* (single tenant).
+   - **Redirect URI**: leave blank (Office handles SSO itself).
+2. Note the **Application (client) ID** from the *Overview* blade. You
+   will paste it into the manifest as `__AZURE_CLIENT_ID__`.
+3. **API permissions** → *Microsoft Graph* → *Delegated permissions*,
+   then **Add permissions**:
+   - `User.Read`
+   - `Calendars.ReadWrite`
+   - `openid`, `profile`, `offline_access`
+   Click **Grant admin consent for &lt;tenant&gt;**.
+4. **Expose an API** → *Set* the Application ID URI to
+   `api://schedule-gen-from-email.vercel.app/<client-id>` (use the same
+   `<client-id>` that you'll put in the manifest). Add a scope
+   `access_as_user` with *Admins and users* consent.
+5. **Authentication** → make sure *Mobile and desktop applications* and
+   the Office add-in client type are not blocking single-page app
+   implicit flow if you later test outside the Office host.
+
+### Manifest wiring
+
+`public/outlook-addin/manifest.xml` carries:
+
+- A `VersionOverridesV1_1` block (required for SSO).
+- `<Permissions>ReadWriteItem</Permissions>` — the Office API surface we
+  use is just reading the current message; `ReadWriteMailbox` is no
+  longer needed.
+- `<WebApplicationInfo>` with the Azure client ID, Application ID URI,
+  and the five Graph scopes listed above.
+
+After the Azure registration, replace both occurrences of
+`__AZURE_CLIENT_ID__` in `manifest.xml` with the real GUID and re-sideload
+the manifest. Bump `<Version>` when you change the manifest.
 
 ### Required permission
 
-The manifest declares `<Permissions>ReadWriteMailbox</Permissions>`. This
-is what allows `makeEwsRequestAsync` to create calendar items. On first
-use Outlook will show a one-time consent dialog asking you to allow the
-add-in to **read and modify items in your mailbox**. Click **Allow**.
+On first click of **Create**, Office shows a one-time consent dialog
+asking the user to allow the add-in to *read and write calendar items
+through Microsoft Graph* using their sign-in. Click **Accept**. The SSO
+token is then cached for subsequent calls; if it expires the add-in
+silently re-acquires it (single retry on `401`).
 
-This is the broadest of the four permission levels
-(`Restricted`, `ReadItem`, `ReadWriteItem`, `ReadWriteMailbox`) and is
-required by EWS calendar operations. If your tenant is a Microsoft 365
-work/school account and your admin has locked down custom add-in
-permissions, the install will fail at the consent step — the fix is to
-ask the admin to allowlist the add-in or grant `ReadWriteMailbox`
-tenant-wide.
+If your tenant admin has blocked user consent for Graph, the install or
+the first create will fail — ask the admin to grant admin consent for
+the Graph permissions listed above, or allow user consent for this app.
 
 ### Error policy
 

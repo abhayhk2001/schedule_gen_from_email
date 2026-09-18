@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Email Event Extractor — API + Outlook Add-in</title>
+    <meta
+      name="description"
+      content="Paste any email, get a structured list of calendar events. Powered by a Vercel serverless API and an Outlook add-in that creates the events with one click."
+    />
+    <link rel="stylesheet" href="/site.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="wrap">
+        <div class="brand">
+          <span class="logo" aria-hidden="true">EE</span>
+          <div>
+            <h1>Email Event Extractor</h1>
+            <p class="tagline">
+              Turn emails into calendar events — paste, extract, create.
+            </p>
+          </div>
+        </div>
+        <nav class="nav">
+          <a href="#try">Try it</a>
+          <a href="#api">API</a>
+          <a href="#addin">Outlook add-in</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <h2>What it does</h2>
+          <p>
+            Reads the contents of an email with an LLM and returns every
+            distinct calendar event as structured JSON
+            (<code>date</code>, <code>time</code>, <code>timezone</code>,
+            <code>end_date</code>, <code>end_time</code>, <code>whole_day</code>,
+            <code>event_name</code>, <code>description</code>). The companion
+            Outlook add-in reads the email you're viewing, calls the same API,
+            and pushes the events straight into your calendar using
+            Microsoft Graph SSO.
+          </p>
+          <p>
+            Two providers, selectable per request
+            (<code>OPENAI_API_KEY</code> /
+            <code>MINIMAX_API_KEY</code>):
+          </p>
+          <ul class="models">
+            <li><code>gpt-4o-mini</code> · OpenAI</li>
+            <li><code>MiniMax-M3</code> · MiniMax (OpenAI-compatible)</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="try" class="try">
+        <div class="wrap">
+          <h2>Try it</h2>
+          <p class="muted">
+            Paste the body of any email below. Pick a model and click
+            <strong>Extract events</strong>. Everything runs against this
+            deployment's <code>/api/extract-event</code> endpoint.
+          </p>
+
+          <form id="extract-form" class="card" autocomplete="off">
+            <label class="row">
+              <span>Model</span>
+              <select id="model" required>
+                <option value="gpt-4o-mini" selected>gpt-4o-mini (OpenAI)</option>
+                <option value="MiniMax-M3">MiniMax-M3 (MiniMax)</option>
+              </select>
+            </label>
+
+            <label class="row">
+              <span>Email</span>
+              <textarea
+                id="email"
+                rows="10"
+                required
+                placeholder="Subject: Hackathon&#10;From: organizer@uni.edu&#10;&#10;Our 3-day hackathon runs Oct 10-12, 2026, 9am-5pm each day in Siebel Center. Lunch is provided."
+              ></textarea>
+            </label>
+
+            <div class="actions">
+              <button type="submit" id="submit-btn" class="primary">
+                Extract events
+              </button>
+              <button type="button" id="sample-btn" class="secondary">
+                Use sample
+              </button>
+            </div>
+          </form>
+
+          <section
+            id="status"
+            class="status hidden"
+            aria-live="polite"
+          ></section>
+
+          <section id="results" class="results hidden">
+            <h3>Events</h3>
+            <div id="events"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="api" class="doc">
+        <div class="wrap">
+          <h2>API</h2>
+          <p><code>POST /api/extract-event</code></p>
+          <pre><code>curl -X POST https://&lt;your-deployment&gt;.vercel.app/api/extract-event \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4o-mini",
+    "email": "Reminder: Career Fair on Friday Oct 3, 2025 from 1:00 PM to 5:00 PM at the Illini Union."
+  }'</code></pre>
+          <p>
+            Response shape, event fields, multi-day rules and error codes are
+            documented in the
+            <a href="https://github.com/anomalyco/opencode#readme">README</a>.
+          </p>
+        </div>
+      </section>
+
+      <section id="addin" class="doc">
+        <div class="wrap">
+          <h2>Outlook add-in</h2>
+          <p>
+            Sideload the manifest into Outlook to extract events from the
+            email you're viewing and create them in your calendar with a
+            single click. Uses Microsoft Graph SSO via
+            <code>Office.auth.getAccessToken</code>.
+          </p>
+          <ol>
+            <li>
+              Download the manifest:
+              <a href="/outlook-addin/manifest.xml">manifest.xml</a>.
+            </li>
+            <li>
+              In Outlook on the web:
+              <em>Settings → Manage integrated add-ins → Add a custom
+              add-in → Add from file…</em>. Pick the manifest you
+              downloaded.
+            </li>
+            <li>
+              Open any message, click the <strong>Extract Events</strong>
+              button on the ribbon.
+            </li>
+          </ol>
+          <p class="muted small">
+            The manifest's <code>&lt;WebApplicationInfo&gt;</code> block needs
+            a real Azure App Registration GUID before sideloading — see the
+            README's "Outlook add-in" section.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <span>
+          Email Event Extractor · source on the project's git host
+        </span>
+        <span>
+          <a href="/api/extract-event">API</a> ·
+          <a href="/outlook-addin/manifest.xml">manifest</a>
+        </span>
+      </div>
+    </footer>
+
+    <script type="module" src="/site.js"></script>
+  </body>
+</html>
