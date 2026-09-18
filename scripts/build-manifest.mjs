@@ -26,7 +26,18 @@ if (!/^[0-9a-fA-F-]{32,}$/.test(clientId)) {
   process.exit(1);
 }
 
-const template = readFileSync(templatePath, "utf8");
+const source = readFileSync(templatePath, "utf8");
+
+const literalMatch = source.match(/MANIFEST_TEMPLATE\s*=\s*`([\s\S]*?)`\s*;/);
+if (!literalMatch) {
+  console.error(
+    "[build-manifest] could not locate MANIFEST_TEMPLATE template literal in",
+    templatePath,
+  );
+  process.exit(1);
+}
+
+const template = literalMatch[1];
 const xml = template.split(placeholder).join(clientId);
 
 mkdirSync(outDir, { recursive: true });
