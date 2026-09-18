@@ -125,6 +125,9 @@ body {
   align-items: center;
   justify-content: center;
 }
+.theme-toggle:not(:first-of-type) {
+  margin-left: 6px;
+}
 .theme-toggle:hover {
   background: var(--surface);
 }

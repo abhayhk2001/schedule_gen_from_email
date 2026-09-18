@@ -452,27 +452,71 @@ clicking **Create**. Each row becomes its own Outlook event.
 
 ### Auth (Azure App Registration required)
 
+The add-in creates calendar events with Microsoft Graph. It uses
+two cooperating auth paths:
+
+| Path | When | How |
+|------|------|-----|
+| **Office SSO fast lane** | Hosts where `Office.auth.getAccessToken` actually returns — Outlook on the web, Outlook desktop on Windows, future Mac builds where Microsoft fixes the silent-hang bug. | `<WebApplicationInfo>` in the manifest; Office calls Entra internally, returns a Graph token to the add-in. Fast (<1 s), no user interaction after first consent. |
+| **MSAL.js popup fallback** | Every other host — including Mac new Outlook today, where `Office.auth.getAccessToken` silently never invokes the callback. | Add-in opens a system-browser popup at `login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize`, the user signs in once, the popup redirects to a static callback page on this domain that posts the auth code back; the add-in POSTs the code to `/api/exchange-token`; the server trades the code (+ S256 PKCE verifier) for a Graph access token. |
+
+Both flows use a **public client** — there is no client secret. The
+PKCE pattern (random 64-byte `code_verifier`, `code_challenge=S256(verifier)`)
+binds the auth code to the requesting browser, so a leaked code is
+useless without the verifier.
+
+#### Azure setup
+
 1. Register an app in **Microsoft Entra admin center** →
    *Applications → App registrations → New registration*.
    - **Name**: `Email Event Extractor` (or similar).
-   - **Supported account types**: *Accounts in this organizational
-     directory only* (single tenant).
-   - **Redirect URI**: leave blank (Office handles SSO itself).
-2. Note the **Application (client) ID** from the *Overview* blade. You
-   will paste it into the manifest as `__AZURE_CLIENT_ID__`.
-3. **API permissions** → *Microsoft Graph* → *Delegated permissions*,
-   then **Add permissions**:
+   - **Supported account types**: *Accounts in any organizational directory* (multi-tenant) OR *Single tenant* if you prefer. Default in this codebase is multi-tenant (`/common`).
+   - **Redirect URI**: leave blank for now (Office handles that itself).
+2. Note the **Application (client) ID** from the *Overview* blade —
+   you'll paste it as `AZURE_CLIENT_ID`.
+3. **Authentication → Add a platform → Single-page application** →
+   add this redirect URI (exact):
+   ```
+   https://schedule-gen-from-email.vercel.app/outlook-addin/auth-callback.html
+   ```
+   If you'll develop locally, also add:
+   ```
+   http://localhost:3000/outlook-addin/auth-callback.html
+   ```
+   Save. (Off-by-one — case, slash, `http` vs `https` — is the single
+   most common cause of `AADSTS50011`.)
+4. **API permissions** → *Microsoft Graph* → *Delegated permissions* →
+   **Add permissions**:
    - `User.Read`
    - `Calendars.ReadWrite`
    - `openid`, `profile`, `offline_access`
    Click **Grant admin consent for &lt;tenant&gt;**.
-4. **Expose an API** → *Set* the Application ID URI to
-   `api://schedule-gen-from-email.vercel.app/<client-id>` (use the same
-   `<client-id>` that you'll put in the manifest). Add a scope
-   `access_as_user` with *Admins and users* consent.
-5. **Authentication** → make sure *Mobile and desktop applications* and
-   the Office add-in client type are not blocking single-page app
-   implicit flow if you later test outside the Office host.
+5. **Expose an API** (only required if you keep the Office SSO fast lane and
+   want V1_0 Office desktop clients to use `client_credentials` flows
+   later; not needed for the MSAL popup path):
+   - *Set* the Application ID URI to
+     `api://schedule-gen-from-email.vercel.app/<client-id>` (use the same
+     `<client-id>` that you'll put in the manifest).
+   - Add a scope `access_as_user` with *Admins and users* consent.
+
+#### Env vars
+
+```bash
+# Production:
+vercel env add AZURE_CLIENT_ID production   --type config
+# paste your GUID when prompted
+
+# Optional. Default authority is /common (multi-tenant).
+# Override to lock a tenant or restrict to work/school:
+vercel env add OAUTH_AUTHORITY production   --type config
+# value e.g. https://login.microsoftonline.com/<your-tenant-id>
+```
+
+`.env.local` for local dev:
+```
+AZURE_CLIENT_ID=<your-guid>
+# OAUTH_AUTHORITY=...
+```
 
 ### Manifest wiring
 
@@ -507,15 +551,24 @@ absence is loud, not silent. Bump the `Version` in
 
 ### Required permission
 
-On first click of **Create**, Office shows a one-time consent dialog
-asking the user to allow the add-in to *read and write calendar items
-through Microsoft Graph* using their sign-in. Click **Accept**. The SSO
-token is then cached for subsequent calls; if it expires the add-in
-silently re-acquires it (single retry on `401`).
+On first click of **Create**:
+
+- **Hosts where Office SSO works** (Outlook on the web, Windows desktop,
+  eventually Mac): Office shows a one-time consent dialog asking the
+  user to allow the add-in to *read and write calendar items through
+  Microsoft Graph* using their sign-in. Click **Accept**. The token is
+  cached; on `401` the add-in re-acquires once.
+- **Hosts where Office SSO hangs** (Mac new Outlook today): the add-in
+  opens a system browser popup at `login.microsoftonline.com`. Sign in
+  once, click **Accept** on the consent screen. The popup closes
+  automatically; the token (with refresh token for silent renewal) is
+  kept in `sessionStorage` for the lifetime of the add-in iframe.
+  Subsequent **Create** clicks are silent.
 
 If your tenant admin has blocked user consent for Graph, the install or
 the first create will fail — ask the admin to grant admin consent for
-the Graph permissions listed above, or allow user consent for this app.
+the Graph permissions listed above (Entra → API permissions → **Grant
+admin consent for &lt;tenant&gt;**).
 
 ### Error policy
 

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Add Cal Event — auth callback</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-size: 14px;
+        line-height: 1.45;
+        max-width: 520px;
+        margin: 36px auto;
+        padding: 0 20px;
+        color: #252423;
+        background: #ffffff;
+      }
+      h1 { font-size: 16px; margin: 0 0 10px; }
+      code { background: rgba(0,0,0,.06); padding: 0 .35em; border-radius: 4px; font-size: 12px; }
+      .row { margin-top: 14px; }
+      .muted { color: #605e5c; }
+      @media (prefers-color-scheme: dark) {
+        body { background: #1f1f1f; color: #f0f0f0; }
+        code { background: rgba(255,255,255,.10); }
+        .muted { color: #b3b3b3; }
+      }
+    </style>
+  </head>
+  <body>
+    <h1 id="title">Finishing sign-in…</h1>
+    <p id="body" class="muted">
+      You can close this window if it does not close automatically.
+    </p>
+    <div class="row">
+      <p id="detail" class="muted" style="font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; word-break: break-all;"></p>
+    </div>
+    <script>
+      (function () {
+        var params = new URLSearchParams(window.location.search);
+        var code = params.get("code");
+        var error = params.get("error");
+        var errorDescription = params.get("error_description") || "";
+        var state = params.get("state") || "";
+        var expectedState = "";
+        try { expectedState = sessionStorage.getItem("addCalEvent.oauthState") || ""; } catch (_) {}
+
+        var titleEl = document.getElementById("title");
+        var bodyEl = document.getElementById("body");
+        var detailEl = document.getElementById("detail");
+
+        function done(payload) {
+          try {
+            if (window.opener && window.opener !== window) {
+              window.opener.postMessage(
+                Object.assign({ source: "addCalEvent.auth" }, payload),
+                window.location.origin,
+              );
+            }
+          } catch (e) {}
+          setTimeout(function () {
+            try { window.close(); } catch (e) {}
+          }, 600);
+        }
+
+        if (error) {
+          if (titleEl) titleEl.textContent = "Sign-in cancelled";
+          if (bodyEl) bodyEl.textContent =
+            error === "access_denied"
+              ? "You cancelled sign-in. Close this window and try again."
+              : "Microsoft Entra rejected the request.";
+          if (detailEl) detailEl.textContent =
+            "error=" + error + " description=" + errorDescription;
+          done({ ok: false, error: error, error_description: errorDescription, state: state });
+          return;
+        }
+
+        if (!code) {
+          if (titleEl) titleEl.textContent = "Auth callback received no code";
+          if (bodyEl) bodyEl.textContent =
+            "This page is the auth callback for Add Cal Event. If you reached it directly, you can close this window.";
+          if (detailEl) detailEl.textContent = window.location.href;
+          done({ ok: false, error: "missing_code", state: state });
+          return;
+        }
+
+        if (expectedState && state && state !== expectedState) {
+          if (titleEl) titleEl.textContent = "Auth state mismatch — possible CSRF";
+          if (bodyEl) bodyEl.textContent =
+            "Expected state does not match the value Microsoft returned. Refusing to hand the code back to the add-in.";
+          if (detailEl) detailEl.textContent = "expected=" + expectedState + " got=" + state;
+          done({ ok: false, error: "state_mismatch", state: state });
+          return;
+        }
+
+        if (titleEl) titleEl.textContent = "Signed in. Returning to the add-in…";
+        if (bodyEl) bodyEl.textContent =
+          "You can close this window if it does not close automatically.";
+        done({ ok: true, code: code, state: state });
+      })();
+    </script>
+  </body>
+</html>

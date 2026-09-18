@@ -18,6 +18,11 @@ const testCallbackTokenBtn = $("test-callback-token-btn");
 const reloadPaneBtn = $("reload-pane-btn");
 const copyLogBtn = $("copy-log-btn");
 const clearLogBtn = $("clear-log-btn");
+const debugToggleBtn = $("debug-toggle");
+
+const DEBUG_VISIBLE_KEY = "addCalEvent.debugVisible";
+const FAST_LANE_TIMEOUT_MS = 4_000;
+const FAST_LANE_FULL_TIMEOUT_MS = 12_000;
 
 function nowStamp() {
   return new Date().toISOString().slice(11, 23);
@@ -25,18 +30,21 @@ function nowStamp() {
 
 function pushLog(level, text) {
   if (!debugSection || !logEl) return;
-  debugSection.classList.remove("hidden");
-  const li = document.createElement("li");
-  li.className = `lvl-${level}`;
-  const ts = document.createElement("span");
-  ts.className = "ts";
-  ts.textContent = nowStamp();
-  const body = document.createElement("span");
-  body.textContent = text;
-  li.appendChild(ts);
-  li.appendChild(body);
-  logEl.appendChild(li);
-  logEl.scrollTop = logEl.scrollHeight;
+  const wasHidden = debugSection.classList.contains("hidden");
+  if (!wasHidden) {
+    const li = document.createElement("li");
+    li.className = `lvl-${level}`;
+    const ts = document.createElement("span");
+    ts.className = "ts";
+    ts.textContent = nowStamp();
+    const body = document.createElement("span");
+    body.textContent = text;
+    li.appendChild(ts);
+    li.appendChild(body);
+    logEl.appendChild(li);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  console.debug(`[debug:${level}] ${text}`);
 }
 
 pushLog(
@@ -203,6 +211,40 @@ if (clearLogBtn) {
   });
 }
 
+function paintDebugToggle() {
+  if (!debugToggleBtn || !debugSection) return;
+  const visible = !debugSection.classList.contains("hidden");
+  debugToggleBtn.setAttribute("aria-expanded", String(visible));
+  debugToggleBtn.title = visible ? "Hide debug log" : "Show debug log";
+}
+
+function applyDebugVisibility(visible) {
+  if (!debugSection) return;
+  debugSection.classList.toggle("hidden", !visible);
+  paintDebugToggle();
+  try {
+    window.localStorage.setItem(DEBUG_VISIBLE_KEY, visible ? "1" : "0");
+  } catch {}
+}
+
+function readDebugVisibility() {
+  try {
+    const stored = window.localStorage.getItem(DEBUG_VISIBLE_KEY);
+    return stored === "1";
+  } catch {
+    return false;
+  }
+}
+
+if (debugToggleBtn) {
+  debugToggleBtn.addEventListener("click", () => {
+    const visible = !debugSection.classList.contains("hidden");
+    applyDebugVisibility(!visible);
+  });
+}
+
+applyDebugVisibility(readDebugVisibility());
+
 const state = {
   events: [],
   removed: new Set(),
@@ -296,11 +338,10 @@ function mapToGraphFields(ev) {
   };
 }
 
-function getGraphToken(scopes, { timeoutMs = 30_000, mode = "graph" } = {}) {
+function getOfficeAccessToken(scopes, { mode, timeoutMs } = {}) {
   return new Promise((resolve, reject) => {
     if (!Office?.auth?.getAccessToken) {
-      pushLog("error", "Office.auth.getAccessToken is not available in this host");
-      console.error("[sso] Office.auth.getAccessToken missing");
+      pushLog("info", "Office.auth.getAccessToken unavailable; skipping fast lane");
       reject(new Error("Office.auth.getAccessToken is not available in this host."));
       return;
     }
@@ -313,19 +354,14 @@ function getGraphToken(scopes, { timeoutMs = 30_000, mode = "graph" } = {}) {
     if (mode === "graph") options.forMSGraphAccess = true;
     pushLog(
       "info",
-      `getAccessToken mode=${mode} scopes=[${scopes.join(", ")}] forMSGraphAccess=${mode === "graph"}`,
+      `fast lane: Office.auth.getAccessToken mode=${mode} forMSGraphAccess=${mode === "graph"} timeoutMs=${timeoutMs}`,
     );
-    console.info("[sso] getAccessToken options", options);
 
     let settled = false;
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      pushLog(
-        "error",
-        `getAccessToken TIMED OUT after ${timeoutMs}ms — call never returned. The dialog may have appeared off-screen; check behind the Outlook window and any other desktops/spaces.`,
-      );
-      console.error(`[sso] timeout after ${timeoutMs}ms`);
+      pushLog("warn", `fast lane timed out after ${timeoutMs}ms — falling back to MSAL`);
       reject(new Error(`SSO timeout after ${timeoutMs}ms (no callback fired)`));
     }, timeoutMs);
 
@@ -333,33 +369,42 @@ function getGraphToken(scopes, { timeoutMs = 30_000, mode = "graph" } = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      console.info("[sso] callback result", result);
-      pushLog(
-        "info",
-        `getAccessToken callback status=${result?.status}`,
-      );
       if (result?.status === "succeeded") {
-        const preview = String(result.value ?? "").slice(0, 24);
-        pushLog("success", `token acquired (preview: ${preview}...)`);
+        pushLog("success", `fast lane: Office token acquired`);
         resolve(result.value);
       } else {
         const err = result?.error ?? {};
-        const code = err.code ?? "?";
-        const name = err.name ?? "";
-        const message = err.message ?? "Failed to acquire token";
-        const trace = Array.isArray(err.traceMessages)
-          ? ` | trace: ${err.traceMessages.join(" / ")}`
-          : "";
         pushLog(
-          "error",
-          `getAccessToken FAILED code=${code} name=${name || "?"} msg="${message}"${trace}`,
+          "warn",
+          `fast lane failed code=${err.code ?? "?"} name=${err.name ?? "?"} — falling back to MSAL`,
         );
-        console.error("[sso] failed", { code, name, message, trace: err.traceMessages });
         reject(
-          new Error(`SSO error (${code}): ${message}${trace}`),
+          new Error(`SSO error (${err.code ?? "?"}): ${err.message ?? "Unknown"}`),
         );
       }
     });
+  });
+}
+
+async function getGraphToken(scopes, opts = {}) {
+  if (!opts.skipFastLane && opts.mode !== "bare") {
+    try {
+      const token = await getOfficeAccessToken(scopes, {
+        mode: opts.mode ?? "graph",
+        timeoutMs: opts.fastLaneTimeoutMs ?? FAST_LANE_TIMEOUT_MS,
+      });
+      return token;
+    } catch (err) {
+      console.warn("[sso] fast lane failed", err);
+    }
+  }
+
+  pushLog("info", "fallback: invoking MSAL.js popup flow");
+  const msalModule = await import("./msal.js");
+  return msalModule.msalLogin(scopes, {
+    onProgress(stage) {
+      pushLog("info", `msal: ${stage}`);
+    },
   });
 }
 
