@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Add Cal Event — auth callback</title>
+    <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
     <style>
       :root { color-scheme: light dark; }
       body {
@@ -42,35 +43,14 @@
         var error = params.get("error");
         var errorDescription = params.get("error_description") || "";
         var state = params.get("state") || "";
-        var expectedState = "";
-        try { expectedState = sessionStorage.getItem("addCalEvent.oauthState") || ""; } catch (_) {}
 
         var titleEl = document.getElementById("title");
         var bodyEl = document.getElementById("body");
         var detailEl = document.getElementById("detail");
 
-        function done(payload) {
-          try {
-            if (window.opener && window.opener !== window) {
-              window.opener.postMessage(
-                Object.assign({ source: "addCalEvent.auth" }, payload),
-                window.location.origin,
-              );
-            }
-          } catch (e) {}
-          try {
-            sessionStorage.setItem(
-              "addCalEvent.callbackResult",
-              JSON.stringify(
-                Object.assign({ at: Date.now() }, payload),
-              ),
-            );
-          } catch (e) {}
-          setTimeout(function () {
-            try { window.close(); } catch (e) {}
-          }, 800);
-        }
-
+        // The pane holds the expected state in a module variable and checks it
+        // when this payload arrives, so there is nothing to validate here.
+        var payload;
         if (error) {
           if (titleEl) titleEl.textContent = "Sign-in cancelled";
           if (bodyEl) bodyEl.textContent =
@@ -79,32 +59,40 @@
               : "Microsoft Entra rejected the request.";
           if (detailEl) detailEl.textContent =
             "error=" + error + " description=" + errorDescription;
-          done({ ok: false, error: error, error_description: errorDescription, state: state });
-          return;
-        }
-
-        if (!code) {
+          payload = { ok: false, error: error, error_description: errorDescription, state: state };
+        } else if (!code) {
           if (titleEl) titleEl.textContent = "Auth callback received no code";
           if (bodyEl) bodyEl.textContent =
             "This page is the auth callback for Add Cal Event. If you reached it directly, you can close this window.";
           if (detailEl) detailEl.textContent = window.location.href;
-          done({ ok: false, error: "missing_code", state: state });
-          return;
+          payload = { ok: false, error: "missing_code", state: state };
+        } else {
+          if (titleEl) titleEl.textContent = "Signed in. Returning to the add-in…";
+          payload = { ok: true, code: code, state: state };
         }
 
-        if (expectedState && state && state !== expectedState) {
-          if (titleEl) titleEl.textContent = "Auth state mismatch — possible CSRF";
+        function fail(reason) {
+          if (titleEl) titleEl.textContent = "Could not return to the add-in";
           if (bodyEl) bodyEl.textContent =
-            "Expected state does not match the value Microsoft returned. Refusing to hand the code back to the add-in.";
-          if (detailEl) detailEl.textContent = "expected=" + expectedState + " got=" + state;
-          done({ ok: false, error: "state_mismatch", state: state });
+            "Sign-in finished, but this window could not hand the result back to Outlook. Close it and try again.";
+          if (detailEl) detailEl.textContent = reason;
+        }
+
+        // messageParent is the whole point of this page: it delivers the code
+        // straight into the task pane, so the result never has to travel
+        // through storage or another browser.
+        if (typeof Office === "undefined" || !Office.onReady) {
+          fail("office.js did not load in this dialog.");
           return;
         }
 
-        if (titleEl) titleEl.textContent = "Signed in. Returning to the add-in…";
-        if (bodyEl) bodyEl.textContent =
-          "You can close this window if it does not close automatically.";
-        done({ ok: true, code: code, state: state });
+        Office.onReady(function () {
+          try {
+            Office.context.ui.messageParent(JSON.stringify(payload));
+          } catch (e) {
+            fail("messageParent threw: " + (e && e.message ? e.message : String(e)));
+          }
+        });
       })();
     </script>
   </body>

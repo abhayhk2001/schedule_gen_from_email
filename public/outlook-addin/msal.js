@@ -1,23 +1,16 @@
 const DEFAULT_REDIRECT_URI =
   "https://schedule-gen-from-email.vercel.app/outlook-addin/auth-callback.html";
 
+const AUTH_START_PATH = "/outlook-addin/auth-start.html";
+
 const CONFIG_CACHE_KEY = "addCalEvent.oauth.configCache";
 const CONFIG_TTL_MS = 5 * 60 * 1000;
 
-function safeSessionGet(key) {
-  try {
-    return window.sessionStorage?.getItem(key) ?? null;
-  } catch {
-    return null;
-  }
-}
+const STORAGE_ACCESS_KEY = "addCalEvent.accessToken";
+const STORAGE_REFRESH_KEY = "addCalEvent.refreshToken";
+const STORAGE_EXPIRES_KEY = "addCalEvent.accessTokenExpiresAt";
 
-function safeSessionSet(key, value) {
-  try {
-    if (value === null || value === undefined) window.sessionStorage.removeItem(key);
-    else window.sessionStorage.setItem(key, value);
-  } catch {}
-}
+const DIALOG_TIMEOUT_MS = 120_000;
 
 function safeLocalGet(key) {
   try {
@@ -34,11 +27,15 @@ function safeLocalSet(key, value) {
   } catch {}
 }
 
-const safeStorageGet = safeSessionGet;
-const safeStorageSet = safeSessionSet;
+function authError(code, message, extra = {}) {
+  const err = new Error(message);
+  err.code = code;
+  Object.assign(err, extra);
+  return err;
+}
 
 async function loadConfig() {
-  const cachedRaw = safeStorageGet(CONFIG_CACHE_KEY);
+  const cachedRaw = safeLocalGet(CONFIG_CACHE_KEY);
   if (cachedRaw) {
     try {
       const parsed = JSON.parse(cachedRaw);
@@ -52,15 +49,32 @@ async function loadConfig() {
   const resp = await fetch("/api/auth-config", { method: "GET" });
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
-    throw new Error(
+    throw authError(
+      "auth_config_unavailable",
       `auth_config_unavailable (${data?.error ?? resp.status}): ${data?.message ?? ""}`.trim(),
     );
   }
   if (!data?.client_id || !data?.authorization_url || !Array.isArray(data.scopes)) {
-    throw new Error("auth_config response is missing client_id/authorization_url/scopes");
+    throw authError(
+      "auth_config_invalid",
+      "auth_config response is missing client_id/authorization_url/scopes",
+    );
   }
-  safeStorageSet(CONFIG_CACHE_KEY, JSON.stringify({ ...data, __fetchedAt: Date.now() }));
+  safeLocalSet(CONFIG_CACHE_KEY, JSON.stringify({ ...data, __fetchedAt: Date.now() }));
   return data;
+}
+
+function tokenUrlFor(config) {
+  if (config?.token_url) return config.token_url;
+  const authority = (config?.authority ?? "https://login.microsoftonline.com/common").replace(
+    /\/+$/,
+    "",
+  );
+  return `${authority}/oauth2/v2.0/token`;
+}
+
+function redirectUriFor(config) {
+  return config?.redirect_uri ?? DEFAULT_REDIRECT_URI;
 }
 
 function b64UrlEncode(bytes) {
@@ -87,23 +101,27 @@ function makeState() {
   return b64UrlEncode(bytes);
 }
 
-const STORAGE_STATE_KEY = "addCalEvent.oauthState";
-const STORAGE_VERIFIER_KEY = "addCalEvent.pkceVerifier";
-const STORAGE_ACCESS_KEY = "addCalEvent.accessToken";
-const STORAGE_REFRESH_KEY = "addCalEvent.refreshToken";
-const STORAGE_EXPIRES_KEY = "addCalEvent.accessTokenExpiresAt";
-const STORAGE_LAST_URL_KEY = "addCalEvent.oauthLastUrl";
-
-async function exchangeViaApi(payload) {
-  const resp = await fetch("/api/exchange-token", {
+/**
+ * Redeem a grant directly against Entra from the browser.
+ *
+ * The redirect URI is registered as a Single-page application, and Entra
+ * refuses SPA-issued codes that are redeemed without an Origin header
+ * (AADSTS9002327). That rules out a server-side exchange, so this call must
+ * stay in the pane. No client secret is involved — this is a public client
+ * using PKCE.
+ */
+async function redeemAtEntra(config, fields) {
+  const params = new URLSearchParams({ client_id: config.client_id, ...fields });
+  const resp = await fetch(tokenUrlFor(config), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
   });
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    throw new Error(
-      `token_exchange_failed (${data?.error ?? resp.status}): ${data?.message ?? ""}`.trim(),
+  if (!resp.ok || data?.error) {
+    throw authError(
+      data?.error ?? "token_exchange_failed",
+      `${data?.error ?? `HTTP ${resp.status}`}: ${data?.error_description ?? resp.statusText}`,
     );
   }
   return data;
@@ -134,217 +152,234 @@ function readCachedAccessToken() {
   return access;
 }
 
-export function getLastAuthorizationUrl() {
-  return safeLocalGet(STORAGE_LAST_URL_KEY);
-}
-
-async function tryRefresh(scopes) {
-  const refreshToken = safeStorageGet(STORAGE_REFRESH_KEY);
+async function tryRefresh(config, scopes) {
+  const refreshToken = safeLocalGet(STORAGE_REFRESH_KEY);
   if (!refreshToken) return null;
   try {
-    const data = await exchangeViaApi({
+    const data = await redeemAtEntra(config, {
+      grant_type: "refresh_token",
       refresh_token: refreshToken,
       scope: scopes.join(" "),
     });
     if (data?.access_token) {
-      storeTokens(
-        data.access_token,
-        data.refresh_token ?? refreshToken,
-        data.expires_in,
-      );
+      storeTokens(data.access_token, data.refresh_token ?? refreshToken, data.expires_in);
       return data.access_token;
     }
   } catch (err) {
+    // A rejected refresh token is not recoverable — drop it so the next
+    // attempt goes straight to the dialog instead of retrying forever.
     console.warn("[msal] refresh failed", err);
+    safeLocalSet(STORAGE_REFRESH_KEY, null);
   }
   return null;
 }
 
-async function popupLoginOnce(config) {
-  if (typeof window.crypto?.subtle?.digest !== "function") {
-    throw new Error(
-      "Web Crypto SubtleCrypto is not available in this WebView. MSAL fallback requires a modern browser.",
-    );
-  }
-  if (!window.isSecureContext) {
-    throw new Error(
-      "PKCE requires a secure context (https or localhost). The add-in iframe does not appear to be secure.",
-    );
-  }
-
-  const verifier = makeCodeVerifier();
-  const challenge = await makeCodeChallenge(verifier);
-  const state = makeState();
-  safeLocalSet(STORAGE_VERIFIER_KEY, verifier);
-  safeLocalSet(STORAGE_STATE_KEY, state);
-  clearCallbackResult();
-
+function buildAuthorizeUrl(config, challenge, state) {
   const url = new URL(config.authorization_url);
   url.searchParams.set("client_id", config.client_id);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("redirect_uri", config.redirect_uri ?? DEFAULT_REDIRECT_URI);
+  url.searchParams.set("redirect_uri", redirectUriFor(config));
   url.searchParams.set("response_mode", "query");
   url.searchParams.set("scope", config.scopes.join(" "));
   url.searchParams.set("code_challenge", challenge);
   url.searchParams.set("code_challenge_method", "S256");
   url.searchParams.set("state", state);
   url.searchParams.set("prompt", "select_account");
-
-  return { url: url.toString(), state };
+  return url.toString();
 }
 
-function safeLocalGetJson(key) {
-  try {
-    const raw = window.localStorage?.getItem(key);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
+function dialogStartUrl(authorizeUrl) {
+  return `${window.location.origin}${AUTH_START_PATH}?url=${encodeURIComponent(authorizeUrl)}`;
 }
 
-function clearCallbackResult() {
-  try {
-    window.localStorage?.removeItem("addCalEvent.callbackResult");
-  } catch {}
-}
-
-function awaitCallbackResult(expectedState, timeoutMs = 120_000) {
+/**
+ * Open Microsoft's consent screen in an Office-owned dialog.
+ *
+ * This replaces window.open: the dialog is hosted by Outlook itself, so it
+ * cannot be popup-blocked and never escapes to the OS default browser. The
+ * auth code comes back in-process via messageParent, which means no storage
+ * hand-off between windows is needed at all.
+ */
+function openAuthDialog(startUrl, onProgress) {
   return new Promise((resolve, reject) => {
-    let settled = false;
-    const startedAt = Date.now();
-
-    function checkLocal() {
-      const stored = safeLocalGetJson("addCalEvent.callbackResult");
-      if (!stored) return false;
-      if (typeof stored.at === "number" && Date.now() - stored.at > 5 * 60 * 1000) {
-        clearCallbackResult();
-        return false;
-      }
-      if (expectedState && stored.state && stored.state !== expectedState) {
-        return false;
-      }
-      return stored;
-    }
-
-    const localPoll = setInterval(() => {
-      if (settled) return;
-      const stored = checkLocal();
-      if (stored) {
-        settled = true;
-        clearInterval(localPoll);
-        clearTimeout(timer);
-        window.removeEventListener("message", onMessage);
-        resolve(stored);
-      }
-    }, 600);
-
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      clearInterval(localPoll);
-      window.removeEventListener("message", onMessage);
+    const ui = window.Office?.context?.ui;
+    if (typeof ui?.displayDialogAsync !== "function") {
       reject(
-        new Error(
-          `Popup did not deliver an auth code within ${Math.round((Date.now() - startedAt) / 1000)}s.`,
+        authError(
+          "dialog_unavailable",
+          "Office.context.ui.displayDialogAsync is not available in this host, so sign-in cannot be shown. Update Outlook or use Outlook on the web.",
         ),
       );
-    }, timeoutMs);
+      return;
+    }
 
-    function onMessage(event) {
-      if (event.origin !== window.location.origin) return;
-      const data = event.data;
-      if (!data || data.source !== "addCalEvent.auth") return;
+    let settled = false;
+    let dialog = null;
+    let timer = null;
+
+    function finish(fn, arg) {
       if (settled) return;
       settled = true;
-      clearInterval(localPoll);
-      clearTimeout(timer);
-      window.removeEventListener("message", onMessage);
-      resolve(data);
+      if (timer) clearTimeout(timer);
+      try {
+        dialog?.close();
+      } catch {}
+      fn(arg);
     }
-    window.addEventListener("message", onMessage);
+
+    ui.displayDialogAsync(
+      startUrl,
+      { height: 60, width: 30, promptBeforeOpen: false },
+      (result) => {
+        if (result?.status !== Office.AsyncResultStatus.Succeeded) {
+          const code = result?.error?.code ?? "?";
+          finish(
+            reject,
+            authError(
+              "dialog_open_failed",
+              `Could not open the sign-in dialog (code ${code}): ${result?.error?.message ?? "unknown"}`,
+            ),
+          );
+          return;
+        }
+
+        dialog = result.value;
+        if (typeof onProgress === "function") onProgress("auth-dialog-opened");
+
+        dialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => {
+          let payload;
+          try {
+            payload = JSON.parse(arg.message);
+          } catch {
+            finish(
+              reject,
+              authError(
+                "dialog_bad_message",
+                "The sign-in dialog sent a message that could not be parsed.",
+              ),
+            );
+            return;
+          }
+          finish(resolve, payload);
+        });
+
+        dialog.addEventHandler(Office.EventType.DialogEventReceived, (arg) => {
+          const code = arg?.error;
+          if (code === 12006) {
+            finish(
+              reject,
+              authError("dialog_cancelled", "Sign-in was cancelled — the dialog was closed."),
+            );
+            return;
+          }
+          finish(
+            reject,
+            authError(
+              "dialog_event",
+              `The sign-in dialog closed unexpectedly (code ${code ?? "?"}).`,
+            ),
+          );
+        });
+
+        timer = setTimeout(() => {
+          finish(
+            reject,
+            authError(
+              "dialog_timeout",
+              `Sign-in did not complete within ${Math.round(DIALOG_TIMEOUT_MS / 1000)}s.`,
+            ),
+          );
+        }, DIALOG_TIMEOUT_MS);
+      },
+    );
   });
 }
 
 export async function msalLogin(scopes, opts = {}) {
+  const progress = typeof opts.onProgress === "function" ? opts.onProgress : () => {};
+
   const cached = readCachedAccessToken();
   if (cached) {
-    if (typeof opts.onProgress === "function") opts.onProgress("auth-cache-hit");
+    progress("auth-cache-hit");
     return cached;
   }
 
-  const refreshed = await tryRefresh(scopes);
+  if (typeof window.crypto?.subtle?.digest !== "function") {
+    throw authError(
+      "no_webcrypto",
+      "Web Crypto SubtleCrypto is not available in this WebView, so PKCE sign-in cannot run.",
+    );
+  }
+  if (!window.isSecureContext) {
+    throw authError(
+      "insecure_context",
+      "PKCE requires a secure context (https). The add-in pane does not appear to be secure.",
+    );
+  }
+
+  const config = await loadConfig();
+
+  const refreshed = await tryRefresh(config, scopes);
   if (refreshed) {
-    if (typeof opts.onProgress === "function") opts.onProgress("auth-refresh");
+    progress("auth-refresh");
     return refreshed;
   }
 
-  if (typeof opts.onProgress === "function") opts.onProgress("auth-popup-opening");
+  const verifier = makeCodeVerifier();
+  const challenge = await makeCodeChallenge(verifier);
+  const state = makeState();
 
-  const config = await loadConfig();
-  const { url, state } = await popupLoginOnce(config);
-  safeLocalSet(STORAGE_LAST_URL_KEY, url);
-  const popup = window.open(
-    url,
-    "msal-consent",
-    "width=520,height=640,menubar=no,toolbar=no,location=no,status=no",
+  progress("auth-dialog-opening");
+  const payload = await openAuthDialog(
+    dialogStartUrl(buildAuthorizeUrl(config, challenge, state)),
+    progress,
   );
-  if (!popup) {
-    safeLocalSet(STORAGE_VERIFIER_KEY, null);
-    safeLocalSet(STORAGE_STATE_KEY, null);
-    const err = new Error(
-      "Popup was blocked. Allow popups for this origin and try again, or click 'Open sign-in here' below.",
-    );
-    err.code = "popup_blocked";
-    err.fallbackUrl = url;
-    throw err;
-  }
-
-  let payload;
-  try {
-    payload = await awaitCallbackResult(state);
-  } catch (err) {
-    try { popup.close(); } catch {}
-    throw err;
-  }
-  try { popup.close(); } catch {}
 
   if (!payload?.ok) {
-    safeLocalSet(STORAGE_VERIFIER_KEY, null);
-    safeLocalSet(STORAGE_STATE_KEY, null);
-    clearCallbackResult();
-    throw new Error(
-      `PKCE callback failed: ${payload?.error ?? "unknown"} (${payload?.error_description ?? ""})`.trim(),
+    throw authError(
+      payload?.error ?? "auth_callback_failed",
+      `Sign-in failed: ${payload?.error ?? "unknown"} ${payload?.error_description ?? ""}`.trim(),
     );
   }
-
-  const verifier = safeLocalGet(STORAGE_VERIFIER_KEY);
-  safeLocalSet(STORAGE_VERIFIER_KEY, null);
-  safeLocalSet(STORAGE_STATE_KEY, null);
-  clearCallbackResult();
-
-  if (!payload.code || !verifier) {
-    throw new Error("PKCE callback delivered no code or verifier was cleared.");
+  if (payload.state !== state) {
+    throw authError(
+      "state_mismatch",
+      "Sign-in state did not match the value this pane generated — refusing the code.",
+    );
+  }
+  if (!payload.code) {
+    throw authError("missing_code", "The sign-in dialog returned no authorization code.");
   }
 
-  const data = await exchangeViaApi({
+  progress("auth-exchanging-code");
+  const data = await redeemAtEntra(config, {
+    grant_type: "authorization_code",
     code: payload.code,
     code_verifier: verifier,
-    redirect_uri: config.redirect_uri ?? DEFAULT_REDIRECT_URI,
+    redirect_uri: redirectUriFor(config),
+    scope: config.scopes.join(" "),
   });
 
   if (!data?.access_token) {
-    throw new Error("Token endpoint returned no access_token.");
+    throw authError("no_access_token", "The token endpoint returned no access_token.");
   }
 
   storeTokens(data.access_token, data.refresh_token, data.expires_in);
-  if (typeof opts.onProgress === "function") opts.onProgress("auth-token-cached");
+  progress("auth-token-cached");
   return data.access_token;
 }
 
+/**
+ * Drop only the access token, keeping the refresh token.
+ *
+ * Used when Graph rejects a token with 401: the grant itself is usually still
+ * good, so the next call can refresh silently instead of re-prompting.
+ */
+export function invalidateAccessToken() {
+  safeLocalSet(STORAGE_ACCESS_KEY, null);
+  safeLocalSet(STORAGE_EXPIRES_KEY, null);
+}
+
 export function resetMsalCache() {
-  safeLocalSet(STORAGE_STATE_KEY, null);
-  safeLocalSet(STORAGE_VERIFIER_KEY, null);
-  clearCallbackResult();
   clearTokens();
 }

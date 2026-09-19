@@ -408,19 +408,21 @@ explicitly), so plaintext storage here is safe.
 After the events render, each card has a checkbox + **× remove** button, and
 the footer shows a green **"Create N events in calendar"** button.
 
-### Transport: Microsoft Graph via Office SSO
+### Transport: Microsoft Graph
 
-The add-in creates calendar events with Microsoft Graph, authenticated by
-the Office Add-in SSO flow (`Office.auth.getAccessToken` with
-`forMSGraphAccess: true`). The signed-in user's identity is reused — no
-separate sign-in, no token storage, and the Graph call is made directly
-from the add-in to `https://graph.microsoft.com/v1.0/me/events`.
+The add-in creates calendar events with Microsoft Graph, calling
+`https://graph.microsoft.com/v1.0/me/events` directly from the pane.
+
+It gets the Bearer token from whichever of two paths works on the host:
+the Office SSO fast lane (`Office.auth.getAccessToken`) where that is
+implemented, otherwise a PKCE sign-in shown in an Office dialog. See
+[Auth](#auth-azure-app-registration-required) and `docs/AUTH.md`.
 
 For each non-removed event, the add-in POSTs:
 
 ```json
 POST https://graph.microsoft.com/v1.0/me/events
-Authorization: Bearer <SSO token>
+Authorization: Bearer <Graph access token>
 Content-Type: application/json
 
 {
@@ -458,7 +460,13 @@ two cooperating auth paths:
 | Path | When | How |
 |------|------|-----|
 | **Office SSO fast lane** | Hosts where `Office.auth.getAccessToken` actually returns — Outlook on the web, Outlook desktop on Windows, future Mac builds where Microsoft fixes the silent-hang bug. | `<WebApplicationInfo>` in the manifest; Office calls Entra internally, returns a Graph token to the add-in. Fast (<1 s), no user interaction after first consent. |
-| **MSAL.js popup fallback** | Every other host — including Mac new Outlook today, where `Office.auth.getAccessToken` silently never invokes the callback. | Add-in opens a system-browser popup at `login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize`, the user signs in once, the popup redirects to a static callback page on this domain that posts the auth code back; the add-in POSTs the code to `/api/exchange-token`; the server trades the code (+ S256 PKCE verifier) for a Graph access token. |
+| **Office dialog sign-in** | Every other host — including **all current Outlook for Mac builds**, where `Office.auth.getAccessToken` silently never invokes its callback. | The add-in calls `Office.context.ui.displayDialogAsync` on a same-origin shim that redirects to `login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize`. Consent renders in a window Outlook owns — it cannot be popup-blocked and never opens the OS default browser. The callback page hands the auth code back with `Office.context.ui.messageParent`, and the pane trades it (+ S256 PKCE verifier) for a Graph access token directly at Entra. |
+
+> An earlier design used `window.open` instead of the Office dialog. It
+> could not work: the popup opened in the user's *default browser*, which
+> shares no `localStorage` and no `window.opener` with Outlook's WebView,
+> so the auth code could never get back. `docs/AUTH.md` §4 has the full
+> post-mortem.
 
 Both flows use a **public client** — there is no client secret. The
 PKCE pattern (random 64-byte `code_verifier`, `code_challenge=S256(verifier)`)
@@ -485,6 +493,13 @@ useless without the verifier.
    ```
    Save. (Off-by-one — case, slash, `http` vs `https` — is the single
    most common cause of `AADSTS50011`.)
+
+   > Keep this on the **Single-page application** platform. That platform
+   > makes Entra require an `Origin` header when the code is redeemed,
+   > which is why the pane redeems it itself rather than posting to
+   > `/api/exchange-token`. Moving the exchange back to the server without
+   > first switching this to *Mobile and desktop applications* fails with
+   > `AADSTS9002327`.
 4. **API permissions** → *Microsoft Graph* → *Delegated permissions* →
    **Add permissions**:
    - `User.Read`
@@ -493,7 +508,7 @@ useless without the verifier.
    Click **Grant admin consent for &lt;tenant&gt;**.
 5. **Expose an API** (only required if you keep the Office SSO fast lane and
    want V1_0 Office desktop clients to use `client_credentials` flows
-   later; not needed for the MSAL popup path):
+   later; not needed for the Office dialog path):
    - *Set* the Application ID URI to
      `api://schedule-gen-from-email.vercel.app/<client-id>` (use the same
      `<client-id>` that you'll put in the manifest).
@@ -553,17 +568,17 @@ absence is loud, not silent. Bump the `Version` in
 
 On first click of **Create**:
 
-- **Hosts where Office SSO works** (Outlook on the web, Windows desktop,
-  eventually Mac): Office shows a one-time consent dialog asking the
-  user to allow the add-in to *read and write calendar items through
-  Microsoft Graph* using their sign-in. Click **Accept**. The token is
-  cached; on `401` the add-in re-acquires once.
-- **Hosts where Office SSO hangs** (Mac new Outlook today): the add-in
-  opens a system browser popup at `login.microsoftonline.com`. Sign in
-  once, click **Accept** on the consent screen. The popup closes
-  automatically; the token (with refresh token for silent renewal) is
-  kept in `sessionStorage` for the lifetime of the add-in iframe.
-  Subsequent **Create** clicks are silent.
+- **Hosts where Office SSO works** (Outlook on the web, Windows desktop):
+  Office shows a one-time consent dialog asking the user to allow the
+  add-in to *read and write calendar items through Microsoft Graph*
+  using their sign-in. Click **Accept**. The token is cached; on `401`
+  the add-in clears its cache and re-acquires once.
+- **Outlook for Mac** (all current builds): the add-in opens a Microsoft
+  sign-in dialog *inside Outlook*. Sign in once and click **Accept**.
+  The dialog closes itself; the access token and a refresh token are
+  cached in `localStorage`, so they survive the pane being recreated
+  when you switch emails. Subsequent **Create** clicks are silent until
+  the token expires, and expiry is then handled by a silent refresh.
 
 If your tenant admin has blocked user consent for Graph, the install or
 the first create will fail — ask the admin to grant admin consent for
@@ -586,6 +601,7 @@ pane without DevTools.
 
 | Button | Action |
 |--------|--------|
+| **Test Dialog auth** | Skips the Office SSO fast lane and runs the Office dialog sign-in directly — no Graph POST. This is the path the add-in actually uses on Mac, so it is the fastest way to verify auth without extracting an email first. |
 | **Test SSO** | Calls `Office.auth.getAccessToken` only — no Graph POST. Surfaces consent errors, sign-in prompts, host compatibility issues, and the 13001/13004/13005/13006/13012 codes that mean a dialog was rejected, suppressed, or never offered. |
 | **Copy log** | Copies the entire log to the clipboard so you can paste it back here. |
 | **Clear** | Empties the panel. |

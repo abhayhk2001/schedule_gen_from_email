@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Add Cal Event — redirecting to sign-in</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-size: 14px;
+        color: #252423;
+        background: #ffffff;
+        margin: 36px auto;
+        max-width: 420px;
+        padding: 0 20px;
+      }
+      @media (prefers-color-scheme: dark) {
+        body { background: #1f1f1f; color: #f0f0f0; }
+      }
+    </style>
+  </head>
+  <body>
+    <p id="msg">Redirecting to Microsoft sign-in…</p>
+    <script>
+      // The Office dialog must be opened on the add-in's own domain, so the
+      // task pane hands us the Entra /authorize URL and we bounce to it.
+      (function () {
+        var target = new URLSearchParams(window.location.search).get("url") || "";
+        var ok = /^https:\/\/login\.microsoftonline\.com\//.test(target);
+        if (!ok) {
+          document.getElementById("msg").textContent =
+            "Refusing to redirect: the sign-in URL is missing or is not a Microsoft login URL.";
+          return;
+        }
+        window.location.replace(target);
+      })();
+    </script>
+  </body>
+</html>

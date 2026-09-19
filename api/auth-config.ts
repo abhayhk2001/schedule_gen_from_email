@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import {
   AUTHORITY,
   AUTHZ_URL,
+  TOKEN_URL,
   REDIRECT_URI,
   GRAPH_DEFAULT_SCOPES,
 } from "../lib/oauth-config.js";
@@ -18,6 +19,7 @@ export default function handler(_req: VercelRequest, res: VercelResponse) {
     client_id: clientId,
     authority: AUTHORITY,
     authorization_url: AUTHZ_URL,
+    token_url: TOKEN_URL,
     redirect_uri: REDIRECT_URI,
     scopes: GRAPH_DEFAULT_SCOPES,
   });

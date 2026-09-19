@@ -16,9 +16,3 @@ export const AUTHORITY =
 export const AUTHZ_URL = `${AUTHORITY}/oauth2/v2.0/authorize`;
 export const TOKEN_URL = `${AUTHORITY}/oauth2/v2.0/token`;
 
-export const PKCE_STATE_KEY = "addCalEvent.oauthState";
-export const PKCE_VERIFIER_KEY = "addCalEvent.pkceVerifier";
-export const PKCE_STAGE_KEY = "addCalEvent.pkceStage";
-export const ACCESS_TOKEN_KEY = "addCalEvent.accessToken";
-export const REFRESH_TOKEN_KEY = "addCalEvent.refreshToken";
-export const TOKEN_EXPIRES_KEY = "addCalEvent.accessTokenExpiresAt";

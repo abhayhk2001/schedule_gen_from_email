@@ -19,9 +19,10 @@ const reloadPaneBtn = $("reload-pane-btn");
 const copyLogBtn = $("copy-log-btn");
 const clearLogBtn = $("clear-log-btn");
 const debugToggleBtn = $("debug-toggle");
-const signinFallbackBtn = $("signin-fallback-btn");
+const testDialogBtn = $("test-dialog-btn");
 
 const DEBUG_VISIBLE_KEY = "addCalEvent.debugVisible";
+const FAST_LANE_BROKEN_KEY = "addCalEvent.fastLaneBroken";
 const FAST_LANE_TIMEOUT_MS = 4_000;
 const FAST_LANE_FULL_TIMEOUT_MS = 12_000;
 
@@ -88,10 +89,24 @@ if (themeBtn) {
 async function testSsoOnly() {
   pushLog("info", "Test SSO: invoking getAccessToken (Graph SSO, forMSGraphAccess=true)");
   try {
-    await getGraphToken(GRAPH_DEFAULT_SCOPES, { mode: "graph" });
+    await getGraphToken(GRAPH_DEFAULT_SCOPES, {
+      mode: "graph",
+      forceFastLane: true,
+      fastLaneTimeoutMs: FAST_LANE_FULL_TIMEOUT_MS,
+    });
     pushLog("success", "Test SSO: completed without error");
   } catch (err) {
     pushLog("error", `Test SSO: ${err?.message ?? String(err)}`);
+  }
+}
+
+async function testDialogAuth() {
+  pushLog("info", "Test Dialog auth: skipping fast lane, going straight to the Office dialog");
+  try {
+    await getGraphToken(GRAPH_DEFAULT_SCOPES, { skipFastLane: true });
+    pushLog("success", "Test Dialog auth: token acquired");
+  } catch (err) {
+    pushLog("error", `Test Dialog auth: ${err?.code ?? "error"} — ${err?.message ?? String(err)}`);
   }
 }
 
@@ -100,7 +115,7 @@ async function testSsoBareOnly() {
   try {
     await getGraphToken(
       ["openid", "profile", "offline_access", "User.Read", "Calendars.ReadWrite"],
-      { mode: "bare", timeoutMs: 15_000 },
+      { mode: "bare", forceFastLane: true, fastLaneTimeoutMs: 15_000 },
     );
     pushLog("success", "Test SSO (no Graph): completed without error");
   } catch (err) {
@@ -187,6 +202,9 @@ async function copyLogToClipboard() {
   }
 }
 
+if (testDialogBtn) {
+  testDialogBtn.addEventListener("click", testDialogAuth);
+}
 if (testSsoBtn) {
   testSsoBtn.addEventListener("click", testSsoOnly);
 }
@@ -339,9 +357,27 @@ function mapToGraphFields(ev) {
   };
 }
 
+// Office.auth.getAccessToken never calls back on Outlook for Mac. Once we have
+// seen that on this host, stop paying the timeout on every subsequent event.
+function markFastLaneBroken(why) {
+  try {
+    window.localStorage.setItem(FAST_LANE_BROKEN_KEY, "1");
+  } catch {}
+  console.debug(`[sso] fast lane marked broken on this host (${why})`);
+}
+
+function isFastLaneBroken() {
+  try {
+    return window.localStorage.getItem(FAST_LANE_BROKEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 function getOfficeAccessToken(scopes, { mode, timeoutMs } = {}) {
   return new Promise((resolve, reject) => {
     if (!Office?.auth?.getAccessToken) {
+      markFastLaneBroken("not available");
       pushLog("info", "Office.auth.getAccessToken unavailable; skipping fast lane");
       reject(new Error("Office.auth.getAccessToken is not available in this host."));
       return;
@@ -362,7 +398,8 @@ function getOfficeAccessToken(scopes, { mode, timeoutMs } = {}) {
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      pushLog("warn", `fast lane timed out after ${timeoutMs}ms — falling back to MSAL`);
+      markFastLaneBroken("timed out");
+      pushLog("warn", `fast lane timed out after ${timeoutMs}ms — using the Office dialog instead`);
       reject(new Error(`SSO timeout after ${timeoutMs}ms (no callback fired)`));
     }, timeoutMs);
 
@@ -375,9 +412,10 @@ function getOfficeAccessToken(scopes, { mode, timeoutMs } = {}) {
         resolve(result.value);
       } else {
         const err = result?.error ?? {};
+        markFastLaneBroken(`code ${err.code ?? "?"}`);
         pushLog(
           "warn",
-          `fast lane failed code=${err.code ?? "?"} name=${err.name ?? "?"} — falling back to MSAL`,
+          `fast lane failed code=${err.code ?? "?"} name=${err.name ?? "?"} — using the Office dialog instead`,
         );
         reject(
           new Error(`SSO error (${err.code ?? "?"}): ${err.message ?? "Unknown"}`),
@@ -388,7 +426,12 @@ function getOfficeAccessToken(scopes, { mode, timeoutMs } = {}) {
 }
 
 async function getGraphToken(scopes, opts = {}) {
-  if (!opts.skipFastLane && opts.mode !== "bare") {
+  let useFastLane = !opts.skipFastLane;
+  if (useFastLane && !opts.forceFastLane && isFastLaneBroken()) {
+    useFastLane = false;
+    pushLog("info", "fast lane skipped (Office SSO already known to fail on this host)");
+  }
+  if (useFastLane) {
     try {
       const token = await getOfficeAccessToken(scopes, {
         mode: opts.mode ?? "graph",
@@ -400,7 +443,7 @@ async function getGraphToken(scopes, opts = {}) {
     }
   }
 
-  pushLog("info", "fallback: invoking MSAL.js popup flow");
+  pushLog("info", "auth: opening the Office dialog sign-in flow");
   const msalModule = await import("./msal.js");
   return msalModule.msalLogin(scopes, {
     onProgress(stage) {
@@ -409,9 +452,9 @@ async function getGraphToken(scopes, opts = {}) {
   });
 }
 
-async function createGraphEvent(ev, { retry = true } = {}) {
+async function createGraphEvent(ev, { retry = true, skipFastLane = false } = {}) {
   const event = mapToGraphFields(ev);
-  const token = await getGraphToken(GRAPH_DEFAULT_SCOPES);
+  const token = await getGraphToken(GRAPH_DEFAULT_SCOPES, { skipFastLane });
 
   pushLog("info", `POST ${GRAPH_RESOURCE}/v1.0/me/events`);
   let resp;
@@ -432,8 +475,13 @@ async function createGraphEvent(ev, { retry = true } = {}) {
   pushLog("info", `Graph response status=${resp.status}`);
 
   if (resp.status === 401 && retry) {
-    pushLog("warn", "Graph returned 401; clearing token cache and retrying once");
-    return createGraphEvent(ev, { retry: false });
+    pushLog("warn", "Graph returned 401; discarding the access token and retrying once");
+    const msalModule = await import("./msal.js");
+    // Keep the refresh token — the grant is usually still valid, so the retry
+    // can renew silently. Skip the fast lane, since an Office SSO token is
+    // what produced this 401 whenever that lane is the one in use.
+    msalModule.invalidateAccessToken();
+    return createGraphEvent(ev, { retry: false, skipFastLane: true });
   }
 
   if (!resp.ok) {
@@ -454,26 +502,14 @@ async function createGraphEvent(ev, { retry = true } = {}) {
 
 async function createEvents(events) {
   const results = [];
-  let firstPopupBlocked = null;
   for (const ev of events) {
     try {
       const { itemId, webLink } = await createGraphEvent(ev);
       results.push({ ev, status: "success", itemId, webLink });
     } catch (err) {
-      const row = {
-        ev,
-        status: "error",
-        error: err?.message ?? String(err),
-        errorCode: err?.code,
-        fallbackUrl: err?.fallbackUrl,
-      };
-      results.push(row);
-      if (err?.code === "popup_blocked") {
-        firstPopupBlocked = firstPopupBlocked ?? err;
-      }
+      results.push({ ev, status: "error", error: err?.message ?? String(err) });
     }
   }
-  if (firstPopupBlocked) throw firstPopupBlocked;
   return results;
 }
 
@@ -614,23 +650,6 @@ function renderResults() {
       err.textContent = r.error;
       body.appendChild(err);
 
-      if (r.errorCode === "popup_blocked" && r.fallbackUrl) {
-        const open = document.createElement("button");
-        open.type = "button";
-        open.className = "retry-btn";
-        open.textContent = "Open sign-in here";
-        open.style.marginTop = "6px";
-        open.addEventListener("click", () => {
-          const opened = window.open(r.fallbackUrl, "_blank");
-          if (!opened) {
-            pushLog("warn", "popup-blocked fallback click also blocked; copy the URL manually");
-          } else {
-            pushLog("info", "sign-in tab opened — complete it, then click Retry");
-          }
-        });
-        body.appendChild(open);
-      }
-
       const retry = document.createElement("button");
       retry.type = "button";
       retry.className = "retry-btn";
@@ -711,12 +730,17 @@ function dumpHostFingerprint(info) {
       "meta",
       `mailbox.getCallbackTokenAsync: ${typeof Office.context?.mailbox?.getCallbackTokenAsync === "function"}`,
     );
-    const ua = navigator.userAgent ?? "";
-    const isWebKitOnly = /AppleWebKit\/605\./.test(ua) && !/Chrome|Chromium|Edge/.test(ua);
-    const isLegacyMacOutlook = /Macintosh; Intel Mac OS X 10_15/.test(ua);
+    const hasDialog =
+      typeof Office.context?.ui?.displayDialogAsync === "function";
+    let dialogSet = "unknown";
+    try {
+      dialogSet = Office.context?.requirements?.isSetSupported("DialogApi", "1.1")
+        ? "DialogApi 1.1 supported"
+        : "DialogApi 1.1 not reported";
+    } catch {}
     pushLog(
-      isLegacyMacOutlook ? "warn" : "info",
-      `host fingerprint: legacyMacOutlookWebView=${isWebKitOnly && isLegacyMacOutlook}; newOutlook=${/Chrome\/.*Macintosh/.test(ua)}`,
+      hasDialog ? "info" : "error",
+      `Office dialog available: ${hasDialog} (${dialogSet}) — this is the sign-in path`,
     );
   } catch (e) {
     pushLog("error", `dumpHostFingerprint threw: ${e?.message ?? e}`);
@@ -730,22 +754,11 @@ Office.onReady((info) => {
   );
   dumpHostFingerprint(info);
 
-  // Detect legacy Mac Outlook from user-agent *after* fingerprint so the
-  // fingerprint lines are visible even when warning.
-  try {
-    const ua = navigator.userAgent ?? "";
-    const legacyMac =
-      /AppleWebKit\/605\./.test(ua) && !/Chrome|Chromium|Edge/.test(ua);
-    if (legacyMac) {
-      pushLog(
-        "warn",
-        "WebView is WebKit 605.x with no Chromium signal — this is **Legacy Mac Outlook**. Office.auth.getAccessToken is unimplemented in this host and the call will hang. Switch to **New Outlook for Mac** (Mail → Window → Switch to New Outlook, or upgrade Office to 16.41+ on macOS 12+), or send the manifest URL to Outlook on the web to install instead.",
-      );
-    }
-  } catch {}
   pushLog(
     "info",
-    `auth.getAccessToken available: ${typeof Office?.auth?.getAccessToken === "function"}`,
+    `auth.getAccessToken available: ${typeof Office?.auth?.getAccessToken === "function"}${
+      isFastLaneBroken() ? " (known broken on this host — skipping it)" : ""
+    }`,
   );
 
   if (info.host !== Office.HostType.Outlook) {
@@ -816,43 +829,17 @@ Office.onReady((info) => {
     if (!remaining.length) return;
     createBtn.disabled = true;
     btn.disabled = true;
-    signinFallbackBtn.classList.add("hidden");
     setStatus("loading", `Creating ${remaining.length} event(s)…`);
     try {
       state.results = await createEvents(remaining);
       clearStatus();
       renderResults();
     } catch (err) {
-      if (err?.code === "popup_blocked" && err?.fallbackUrl) {
-        setStatus(
-          "error",
-          "Popup was blocked. Click 'Open sign-in here' below, then retry Create.",
-        );
-        signinFallbackBtn.dataset.url = err.fallbackUrl;
-        signinFallbackBtn.classList.remove("hidden");
-        pushLog("warn", "popup blocked; offering 'Open sign-in here' button");
-      } else {
-        setStatus("error", err?.message ?? "Unknown error");
-      }
+      setStatus("error", err?.message ?? "Unknown error");
     } finally {
       createBtn.disabled = false;
       btn.disabled = false;
     }
   });
 
-  if (signinFallbackBtn) {
-    signinFallbackBtn.addEventListener("click", () => {
-      const url = signinFallbackBtn.dataset.url;
-      if (!url) return;
-      const opened = window.open(url, "_blank");
-      if (!opened) {
-        pushLog(
-          "warn",
-          "Fallback 'Open sign-in here' click also blocked; copy the URL manually or check Safari permissions.",
-        );
-      } else {
-        pushLog("info", "sign-in tab opened — complete it, then click Create again");
-      }
-    });
-  }
 });
