@@ -4,7 +4,7 @@ const DEFAULT_REDIRECT_URI =
 const CONFIG_CACHE_KEY = "addCalEvent.oauth.configCache";
 const CONFIG_TTL_MS = 5 * 60 * 1000;
 
-function safeStorageGet(key) {
+function safeSessionGet(key) {
   try {
     return window.sessionStorage?.getItem(key) ?? null;
   } catch {
@@ -12,12 +12,30 @@ function safeStorageGet(key) {
   }
 }
 
-function safeStorageSet(key, value) {
+function safeSessionSet(key, value) {
   try {
     if (value === null || value === undefined) window.sessionStorage.removeItem(key);
     else window.sessionStorage.setItem(key, value);
   } catch {}
 }
+
+function safeLocalGet(key) {
+  try {
+    return window.localStorage?.getItem(key) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function safeLocalSet(key, value) {
+  try {
+    if (value === null || value === undefined) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, value);
+  } catch {}
+}
+
+const safeStorageGet = safeSessionGet;
+const safeStorageSet = safeSessionSet;
 
 async function loadConfig() {
   const cachedRaw = safeStorageGet(CONFIG_CACHE_KEY);
@@ -74,6 +92,7 @@ const STORAGE_VERIFIER_KEY = "addCalEvent.pkceVerifier";
 const STORAGE_ACCESS_KEY = "addCalEvent.accessToken";
 const STORAGE_REFRESH_KEY = "addCalEvent.refreshToken";
 const STORAGE_EXPIRES_KEY = "addCalEvent.accessTokenExpiresAt";
+const STORAGE_LAST_URL_KEY = "addCalEvent.oauthLastUrl";
 
 async function exchangeViaApi(payload) {
   const resp = await fetch("/api/exchange-token", {
@@ -91,10 +110,10 @@ async function exchangeViaApi(payload) {
 }
 
 function storeTokens(accessToken, refreshToken, expiresInSec) {
-  safeStorageSet(STORAGE_ACCESS_KEY, accessToken);
-  if (refreshToken) safeStorageSet(STORAGE_REFRESH_KEY, refreshToken);
+  safeLocalSet(STORAGE_ACCESS_KEY, accessToken);
+  if (refreshToken) safeLocalSet(STORAGE_REFRESH_KEY, refreshToken);
   if (expiresInSec) {
-    safeStorageSet(
+    safeLocalSet(
       STORAGE_EXPIRES_KEY,
       String(Date.now() + (Number(expiresInSec) - 60) * 1000),
     );
@@ -102,17 +121,21 @@ function storeTokens(accessToken, refreshToken, expiresInSec) {
 }
 
 function clearTokens() {
-  safeStorageSet(STORAGE_ACCESS_KEY, null);
-  safeStorageSet(STORAGE_REFRESH_KEY, null);
-  safeStorageSet(STORAGE_EXPIRES_KEY, null);
+  safeLocalSet(STORAGE_ACCESS_KEY, null);
+  safeLocalSet(STORAGE_REFRESH_KEY, null);
+  safeLocalSet(STORAGE_EXPIRES_KEY, null);
 }
 
 function readCachedAccessToken() {
-  const access = safeStorageGet(STORAGE_ACCESS_KEY);
-  const expiresAt = Number(safeStorageGet(STORAGE_EXPIRES_KEY));
+  const access = safeLocalGet(STORAGE_ACCESS_KEY);
+  const expiresAt = Number(safeLocalGet(STORAGE_EXPIRES_KEY));
   if (!access || !expiresAt) return null;
   if (Date.now() >= expiresAt) return null;
   return access;
+}
+
+export function getLastAuthorizationUrl() {
+  return safeLocalGet(STORAGE_LAST_URL_KEY);
 }
 
 async function tryRefresh(scopes) {
@@ -209,17 +232,21 @@ export async function msalLogin(scopes, opts = {}) {
 
   const config = await loadConfig();
   const { url, state } = await popupLoginOnce(config);
+  safeLocalSet(STORAGE_LAST_URL_KEY, url);
   const popup = window.open(
     url,
     "msal-consent",
     "width=520,height=640,menubar=no,toolbar=no,location=no,status=no",
   );
   if (!popup) {
-    safeStorageSet(STORAGE_VERIFIER_KEY, null);
-    safeStorageSet(STORAGE_STATE_KEY, null);
-    throw new Error(
-      "Popup was blocked. Allow popups for this origin and try again.",
+    safeSessionSet(STORAGE_VERIFIER_KEY, null);
+    safeSessionSet(STORAGE_STATE_KEY, null);
+    const err = new Error(
+      "Popup was blocked. Allow popups for this origin and try again, or click 'Open sign-in here' below.",
     );
+    err.code = "popup_blocked";
+    err.fallbackUrl = url;
+    throw err;
   }
 
   let payload;

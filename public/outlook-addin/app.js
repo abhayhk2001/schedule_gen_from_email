@@ -19,6 +19,7 @@ const reloadPaneBtn = $("reload-pane-btn");
 const copyLogBtn = $("copy-log-btn");
 const clearLogBtn = $("clear-log-btn");
 const debugToggleBtn = $("debug-toggle");
+const signinFallbackBtn = $("signin-fallback-btn");
 
 const DEBUG_VISIBLE_KEY = "addCalEvent.debugVisible";
 const FAST_LANE_TIMEOUT_MS = 4_000;
@@ -786,16 +787,43 @@ Office.onReady((info) => {
     if (!remaining.length) return;
     createBtn.disabled = true;
     btn.disabled = true;
+    signinFallbackBtn.classList.add("hidden");
     setStatus("loading", `Creating ${remaining.length} event(s)…`);
     try {
       state.results = await createEvents(remaining);
       clearStatus();
       renderResults();
     } catch (err) {
-      setStatus("error", err?.message ?? "Unknown error");
+      if (err?.code === "popup_blocked" && err?.fallbackUrl) {
+        setStatus(
+          "error",
+          "Popup was blocked. Click 'Open sign-in here' below, then retry Create.",
+        );
+        signinFallbackBtn.dataset.url = err.fallbackUrl;
+        signinFallbackBtn.classList.remove("hidden");
+        pushLog("warn", "popup blocked; offering 'Open sign-in here' button");
+      } else {
+        setStatus("error", err?.message ?? "Unknown error");
+      }
     } finally {
       createBtn.disabled = false;
       btn.disabled = false;
     }
   });
+
+  if (signinFallbackBtn) {
+    signinFallbackBtn.addEventListener("click", () => {
+      const url = signinFallbackBtn.dataset.url;
+      if (!url) return;
+      const opened = window.open(url, "_blank");
+      if (!opened) {
+        pushLog(
+          "warn",
+          "Fallback 'Open sign-in here' click also blocked; copy the URL manually or check Safari permissions.",
+        );
+      } else {
+        pushLog("info", "sign-in tab opened — complete it, then click Create again");
+      }
+    });
+  }
 });
