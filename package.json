@@ -6,6 +6,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "icons": "./scripts/build-icons.sh",
     "dev": "vercel dev",
     "deploy": "npm run typecheck && npm test && vercel --prod"
   },

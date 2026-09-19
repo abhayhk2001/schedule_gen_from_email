@@ -98,8 +98,8 @@ Two properties make this host-agnostic where the old flow was not:
 
 | Path | Role |
 |------|------|
-| `public/outlook-addin/app.js` | `getGraphToken(scopes, opts)` runs the fast lane then `msalLogin`. `createGraphEvent` calls `resetMsalCache()` before its single 401 retry. Debug panel logs every stage. |
-| `public/outlook-addin/index.html` | Hosts the pane and the Debug panel, including the **Test Dialog auth** button that exercises the dialog path directly. |
+| `public/outlook-addin/app.js` | `getGraphToken(scopes, opts)` runs the fast lane then `msalLogin`. `createGraphEvent` calls `invalidateAccessToken()` before its single 401 retry. Every stage is logged to the console. |
+| `public/outlook-addin/index.html` | Hosts the task pane. |
 
 ## 4. How the popup design failed, and what replaced it
 
@@ -134,7 +134,6 @@ Everything the client persists is in `localStorage` (per-origin, survives pane r
 | `addCalEvent.accessTokenExpiresAt` | ~1 h | epoch ms, checked before the access token is used (60 s safety margin) |
 | `addCalEvent.oauth.configCache` | 5 min | `/api/auth-config` response |
 | `addCalEvent.fastLaneBroken` | until cleared | set once `Office.auth.getAccessToken` has failed on this host, so later calls skip the 4 s timeout |
-| `addCalEvent.debugVisible` | until toggled | whether the Debug panel is expanded |
 
 The PKCE verifier and `state` are deliberately **not** in this table. They live in `msal.js` module variables for the duration of a single `msalLogin` call.
 
@@ -163,8 +162,6 @@ The old `popup_blocked` code and everything built on it (the global "Open sign-i
 | Where | Wait | Why |
 |------|------|-----|
 | Fast lane (`Office.auth.getAccessToken`) | 4 s (`FAST_LANE_TIMEOUT_MS`) | Long enough for a real SSO prompt on Windows desktop or Outlook on the web; short enough that Mac's hang is recognised quickly. Paid **once** per host — the failure is then remembered in `addCalEvent.fastLaneBroken` and the lane is skipped. |
-| Debug "Test SSO" | 12 s (`FAST_LANE_FULL_TIMEOUT_MS`) | Gives Office SSO a longer leash when deliberately testing it |
-| Debug "Test SSO (no Graph)" | 15 s | Same, without `forMSGraphAccess` |
 | Office dialog → `messageParent` | 120 s (`DIALOG_TIMEOUT_MS`) | Consent can take a minute if the user walks away or has to do MFA |
 | Access-token expiry margin | 60 s | Refresh slightly early rather than hand Graph a token about to expire |
 | `/api/auth-config` cache | 5 min | Avoids a round-trip on every create |
@@ -221,11 +218,11 @@ The token exchange itself goes **straight from the pane to `https://login.micros
 
 ## 11. What the dialog rewrite did **not** change
 
-- **Manifest XML** — untouched, so **the add-in does not need to be reinstalled**. `WebApplicationInfo` still references the same Application ID URI, and the Office-SSO fast lane keeps working on hosts where it works.
+- **Manifest XML** — untouched *by the auth work*, so the dialog rewrite alone needed no reinstall. (A later change added `<SupportsPinning>` and bumped the version to 1.4.0.0, which does require reinstalling.) `WebApplicationInfo` still references the same Application ID URI, and the Office-SSO fast lane keeps working on hosts where it works.
 - **`/api/extract-event`** and the whole LLM extraction path.
 - **The Graph call** — still `POST /v1.0/me/events` with the same body; only the token acquisition changed.
 - **`mapToGraphFields`** event-schema mapping.
-- **UI layout**, apart from removing the dead "Open sign-in here" button and adding **Test Dialog auth** to the Debug panel.
+- **UI layout** was left alone by the dialog rewrite. It was reworked separately afterwards: the debug panel was removed, the header rebuilt, and the palette moved onto Fluent tokens.
 
 ## 12. Known edge cases and how they're handled
 
@@ -241,28 +238,31 @@ The token exchange itself goes **straight from the pane to `https://login.micros
 | User clears `localStorage` | Tokens are lost; the next create re-prompts. Normal. |
 | `auth-start.html` opened directly, or with a non-Microsoft `?url=` | Refuses to redirect and says so. It will only bounce to `https://login.microsoftonline.com/`. |
 
-## 13. Diagnostic breadcrumbs (Debug panel)
+## 13. Diagnostics
 
-Expand **Debug** in the pane. A healthy Mac run looks like:
+The in-pane debug panel is gone. It existed to diagnose the Office SSO hang
+from a host with no DevTools; that is solved, and the panel was taking up most
+of the task pane. Everything it logged now goes to the console with an
+`[addCalEvent:<level>]` prefix.
+
+A healthy Mac run reads:
 
 ```
-Office.onReady host=Outlook platform=OfficeOnline
-Office dialog available: true (DialogApi 1.1 supported) — this is the sign-in path
-auth.getAccessToken available: true (known broken on this host — skipping it)
-fast lane skipped (Office SSO already known to fail on this host)
-auth: opening the Office dialog sign-in flow
-msal: auth-dialog-opening
-msal: auth-dialog-opened
-msal: auth-exchanging-code
-msal: auth-token-cached
-POST https://graph.microsoft.com/v1.0/me/events
-Graph response status=201
-Graph event created id=AAMkAD...
+[addCalEvent:info] Office.onReady host=Outlook platform=...
+[addCalEvent:info] auth.getAccessToken available: true (known broken on this host — skipping it)
+[addCalEvent:info] fast lane skipped (Office SSO already known to fail on this host)
+[addCalEvent:info] auth: opening the Office dialog sign-in flow
+[addCalEvent:info] msal: auth-dialog-opening
+[addCalEvent:info] msal: auth-dialog-opened
+[addCalEvent:info] msal: auth-exchanging-code
+[addCalEvent:info] msal: auth-token-cached
+[addCalEvent:info] POST https://graph.microsoft.com/v1.0/me/events
+[addCalEvent:info] Graph response status=201
 ```
 
-On the very first run the fast lane is still attempted, so you also see `fast lane timed out after 4000ms — using the Office dialog instead`. Subsequent creates show `msal: auth-cache-hit` instead of the dialog stages.
-
-**Test Dialog auth** exercises the dialog path on its own, without needing an email to extract from. Every line is also written to `console.debug`.
+On the very first run the fast lane is still attempted, adding
+`fast lane timed out after 4000ms`. Later creates show `msal: auth-cache-hit`
+instead of the dialog stages.
 
 ## 14. Verifying a deployment
 
@@ -282,7 +282,7 @@ rm -rf ~/Library/Containers/com.microsoft.Outlook/Data/Library/Caches/com.micros
 
 then restart Outlook.
 
-In the pane: **Debug → Test Dialog auth** should open an Outlook-owned dialog (never the default browser), show the Microsoft account picker, close itself, and log `msal: auth-token-cached`.
+Then click **Create** on an extracted event: an Outlook-owned dialog should open (never the default browser), show the Microsoft account picker, close itself, and log `msal: auth-token-cached`.
 
 ## 15. Future work
 

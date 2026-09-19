@@ -1,85 +1,72 @@
-:root {
+/* Palette follows Fluent 2 / Outlook rather than a saturated web blue.
+   Office hands us bg/fg/surface/border at runtime (see theme.js) so the pane
+   blends with the host, but accents are ours: officeTheme.accent1 is a brand
+   highlight colour and reads far too hot when used to fill a whole button. */
+
+:root,
+:root[data-static-theme="dark"],
+:root[data-theme="dark"] {
   --bg: #1f1f1f;
   --fg: #f0f0f0;
-  --surface: #2b2b2b;
-  --surface-fg: #f0f0f0;
-  --border: #3f3f3f;
-  --accent: #2899f5;
-  --accent-hover: #62b8f8;
-  --accent-on: #000000;
-  --accent-soft: rgba(40, 153, 245, 0.18);
+  --surface: #292929;
+  --surface-fg: #e6e6e6;
+  --border: #3d3d3d;
 
-  --success-fg: #34d399;
-  --success-fg-strong: #10b981;
-  --success-bg: rgba(5, 150, 105, 0.18);
-  --success-on: #001a13;
+  /* Fluent dark: brand background + its hover, white label. */
+  --accent: #115ea3;
+  --accent-hover: #0f6cbd;
+  --accent-on: #ffffff;
+  --accent-text: #479ef5;        /* links + accent-coloured text */
+  --accent-soft: rgba(71, 158, 245, 0.14);
 
-  --error-fg: #ff8a8a;
-  --error-bg: rgba(168, 0, 0, 0.20);
+  --success-solid: #107c10;
+  --success-solid-hover: #0b6a0b;
+  --success-on: #ffffff;
+  --success-fg: #54b054;
+  --success-bg: rgba(84, 176, 84, 0.14);
 
-  --muted: #b3b3b3;
-  --removed-bg: #262626;
-  --removed-fg: #777777;
+  --error-fg: #dc626d;
+  --error-bg: rgba(220, 98, 109, 0.14);
 
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.18), 0 6px 16px rgba(0, 0, 0, 0.30);
+  --muted: #adadad;
+  --removed-bg: #242424;
+  --removed-fg: #717171;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.24), 0 4px 12px rgba(0, 0, 0, 0.32);
 
   color-scheme: dark;
 }
 
-:root[data-static-theme="light"] {
+:root[data-static-theme="light"],
+:root[data-theme="light"] {
   --bg: #ffffff;
-  --fg: #252423;
-  --surface: #f3f2f1;
-  --surface-fg: #252423;
-  --border: #b1b1b1;
-  --accent: #0078d4;
-  --accent-hover: #106ebe;
+  --fg: #242424;
+  --surface: #f5f5f5;
+  --surface-fg: #242424;
+  --border: #d1d1d1;
+
+  --accent: #0f6cbd;
+  --accent-hover: #115ea3;
   --accent-on: #ffffff;
-  --accent-soft: rgba(0, 120, 212, 0.10);
+  --accent-text: #0f6cbd;
+  --accent-soft: rgba(15, 108, 189, 0.10);
 
-  --success-fg: #047857;
-  --success-fg-strong: #059669;
-  --success-bg: #ecfdf5;
+  --success-solid: #0e700e;
+  --success-solid-hover: #0c5e0c;
   --success-on: #ffffff;
+  --success-fg: #0e700e;
+  --success-bg: #eff6ef;
 
-  --error-fg: #a80000;
-  --error-bg: #fde7e9;
+  --error-fg: #b10e1c;
+  --error-bg: #fdf3f4;
 
-  --muted: #605e5c;
-  --removed-bg: #f3f4f6;
-  --removed-fg: #9ca3af;
+  --muted: #616161;
+  --removed-bg: #f5f5f5;
+  --removed-fg: #a6a6a6;
 
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0, 0, 0, 0.04);
 
   color-scheme: light;
-}
-
-:root[data-static-theme="dark"] {
-  --bg: #1f1f1f;
-  --fg: #f0f0f0;
-  --surface: #2b2b2b;
-  --surface-fg: #f0f0f0;
-  --border: #3f3f3f;
-  --accent: #2899f5;
-  --accent-hover: #62b8f8;
-  --accent-on: #000000;
-  --accent-soft: rgba(40, 153, 245, 0.18);
-
-  --success-fg: #34d399;
-  --success-fg-strong: #10b981;
-  --success-bg: rgba(5, 150, 105, 0.18);
-  --success-on: #001a13;
-
-  --error-fg: #ff8a8a;
-  --error-bg: rgba(168, 0, 0, 0.20);
-
-  --muted: #b3b3b3;
-  --removed-bg: #262626;
-  --removed-fg: #777777;
-
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.18), 0 6px 16px rgba(0, 0, 0, 0.30);
-
-  color-scheme: dark;
 }
 
 * {
@@ -97,22 +84,47 @@ body {
   background: var(--bg);
 }
 
+/* ---------- header ---------- */
+
 .app-header {
-  padding: 12px 16px 8px;
-  border-bottom: 1px solid var(--border);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-icon {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  margin-top: 1px;
+}
+
+/* Takes the remaining width so the title never wraps mid-phrase and the
+   subtitle runs the full width of the pane instead of being squeezed. */
+.app-heading {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .app-header h1 {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
+  line-height: 1.3;
 }
 
-.theme-toggle {
-  margin-left: auto;
+.subtitle {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.icon-btn {
+  flex: 0 0 auto;
   width: 28px;
   height: 28px;
   padding: 0;
@@ -125,68 +137,74 @@ body {
   align-items: center;
   justify-content: center;
 }
-.theme-toggle:not(:first-of-type) {
-  margin-left: 6px;
-}
-.theme-toggle:hover {
+.icon-btn:hover {
   background: var(--surface);
 }
-.theme-toggle:focus-visible {
-  outline: 2px solid var(--accent);
+.icon-btn:focus-visible {
+  outline: 2px solid var(--accent-text);
   outline-offset: 2px;
 }
-.theme-toggle svg {
+.icon-btn svg {
   width: 16px;
   height: 16px;
   display: block;
 }
 
-.subtitle {
-  margin: 4px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-  flex-basis: 100%;
-}
+/* ---------- layout ---------- */
 
 main {
-  padding: 12px 16px;
+  padding: 12px 16px 20px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 button.primary {
   width: 100%;
-  padding: 10px 14px;
+  padding: 9px 14px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 4px;
   background: var(--accent);
   color: var(--accent-on);
   font-weight: 600;
   cursor: pointer;
   font-size: 14px;
+  font-family: inherit;
 }
 
 button.primary:hover {
   background: var(--accent-hover);
 }
 
+button.primary:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
 button.primary:disabled {
   background: color-mix(in srgb, var(--accent) 45%, var(--surface));
+  color: var(--muted);
   cursor: not-allowed;
 }
 
 button.primary.create {
-  background: var(--success-fg-strong);
+  background: var(--success-solid);
   color: var(--success-on);
 }
 
 button.primary.create:hover {
-  background: var(--success-fg);
+  background: var(--success-solid-hover);
 }
 
 button.primary.create:disabled {
-  background: color-mix(in srgb, var(--success-fg-strong) 50%, var(--surface));
+  background: color-mix(in srgb, var(--success-solid) 45%, var(--surface));
+  color: var(--muted);
   cursor: not-allowed;
 }
 
@@ -194,16 +212,17 @@ button.primary.create:disabled {
   display: none !important;
 }
 
+/* ---------- status ---------- */
+
 .status {
-  margin-top: 4px;
-  padding: 10px 12px;
-  border-radius: 6px;
+  padding: 9px 12px;
+  border-radius: 4px;
   font-size: 13px;
 }
 
 .status.loading {
   background: var(--accent-soft);
-  color: var(--accent-hover);
+  color: var(--accent-text);
 }
 
 .status.error {
@@ -213,25 +232,23 @@ button.primary.create:disabled {
 
 .status.success {
   background: var(--success-bg);
-  color: var(--success-fg-strong);
+  color: var(--success-fg);
 }
 
-.results {
-  margin-top: 6px;
-}
+/* ---------- results ---------- */
 
 .results h2 {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   color: var(--muted);
 }
 
 .event {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 6px;
   padding: 10px 12px;
   margin-bottom: 8px;
 }
@@ -256,7 +273,7 @@ button.primary.create:disabled {
 .event-row input[type="checkbox"] {
   margin-top: 4px;
   flex-shrink: 0;
-  accent-color: var(--accent);
+  accent-color: var(--accent-text);
 }
 
 .event-body {
@@ -331,7 +348,7 @@ button.primary.create:disabled {
 
 .event.result.success .result-marker {
   background: var(--success-bg);
-  color: var(--success-fg-strong);
+  color: var(--success-fg);
 }
 
 .event.result.error .result-marker {
@@ -342,7 +359,7 @@ button.primary.create:disabled {
 .event.result .event-body a {
   display: inline-block;
   margin-top: 4px;
-  color: var(--accent);
+  color: var(--accent-text);
   font-size: 12px;
   text-decoration: none;
 }
@@ -360,97 +377,25 @@ button.primary.create:disabled {
 .retry-btn {
   margin-top: 6px;
   padding: 4px 10px;
-  border: 1px solid var(--error-fg);
+  border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg);
-  color: var(--error-fg);
+  color: var(--fg);
   font-size: 12px;
+  font-family: inherit;
   cursor: pointer;
 }
 .retry-btn:hover {
-  background: var(--error-bg);
+  background: var(--surface);
+  border-color: var(--accent-text);
+  color: var(--accent-text);
 }
 
 .empty {
-  margin-top: 6px;
   padding: 14px;
   border: 1px dashed var(--border);
-  border-radius: 8px;
+  border-radius: 6px;
   text-align: center;
   color: var(--muted);
   font-size: 13px;
 }
-
-.debug {
-  margin-top: 12px;
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
-}
-
-.debug-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-}
-.debug-head h2 {
-  margin: 0;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-}
-
-.debug-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.debug-btn {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 4px 8px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--fg);
-  cursor: pointer;
-}
-.debug-btn:hover {
-  background: var(--surface);
-}
-.debug-btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.log {
-  list-style: none;
-  margin: 0;
-  padding: 8px 10px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-    monospace;
-  font-size: 11px;
-  line-height: 1.45;
-  max-height: 240px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.log li {
-  padding: 2px 0;
-  border-bottom: 1px dashed var(--border);
-}
-.log li:last-child {
-  border-bottom: 0;
-}
-.log .lvl-info    { color: var(--fg); }
-.log .lvl-success { color: var(--success-fg-strong); }
-.log .lvl-warn    { color: var(--accent-hover); }
-.log .lvl-error   { color: var(--error-fg); }
-.log .lvl-meta    { color: var(--muted); }
-.log .ts { color: var(--muted); margin-right: 6px; }

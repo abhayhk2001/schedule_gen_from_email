@@ -9,53 +9,19 @@ const results = $("results");
 const eventsEl = $("events");
 const themeBtn = $("theme-toggle");
 const themeIcon = $("theme-icon");
-const debugSection = $("debug");
-const logEl = $("log");
-const testSsoBtn = $("test-sso-btn");
-const testSsoBareBtn = $("test-sso-bare-btn");
-const testLegacySsoBtn = $("test-legacy-sso-btn");
-const testCallbackTokenBtn = $("test-callback-token-btn");
-const reloadPaneBtn = $("reload-pane-btn");
-const copyLogBtn = $("copy-log-btn");
-const clearLogBtn = $("clear-log-btn");
-const debugToggleBtn = $("debug-toggle");
-const testDialogBtn = $("test-dialog-btn");
 
-const DEBUG_VISIBLE_KEY = "addCalEvent.debugVisible";
 const FAST_LANE_BROKEN_KEY = "addCalEvent.fastLaneBroken";
 const FAST_LANE_TIMEOUT_MS = 4_000;
-const FAST_LANE_FULL_TIMEOUT_MS = 12_000;
 
-function nowStamp() {
-  return new Date().toISOString().slice(11, 23);
-}
-
+// Diagnostics go to the console only. The in-pane debug panel existed to
+// diagnose the Office SSO hang from a host with no DevTools; that is solved,
+// and the panel was taking up most of the task pane.
 function pushLog(level, text) {
-  if (!debugSection || !logEl) return;
-  const wasHidden = debugSection.classList.contains("hidden");
-  if (!wasHidden) {
-    const li = document.createElement("li");
-    li.className = `lvl-${level}`;
-    const ts = document.createElement("span");
-    ts.className = "ts";
-    ts.textContent = nowStamp();
-    const body = document.createElement("span");
-    body.textContent = text;
-    li.appendChild(ts);
-    li.appendChild(body);
-    logEl.appendChild(li);
-    logEl.scrollTop = logEl.scrollHeight;
-  }
-  console.debug(`[debug:${level}] ${text}`);
-}
-
-pushLog(
-  "meta",
-  `Office global loaded: ${typeof Office !== "undefined"}; will print host info after Office.onReady`,
-);
-if (typeof navigator !== "undefined") {
-  pushLog("meta", `navigator.userAgent=${navigator.userAgent}`);
-  pushLog("meta", `navigator.platform=${navigator.platform}`);
+  const fn = level === "error" ? console.error
+    : level === "warn" ? console.warn
+    : level === "success" || level === "info" ? console.info
+    : console.debug;
+  fn(`[addCalEvent:${level}] ${text}`);
 }
 
 const GRAPH_RESOURCE = "https://graph.microsoft.com";
@@ -84,244 +50,6 @@ function onThemeToggleClick() {
 if (themeBtn) {
   themeBtn.addEventListener("click", onThemeToggleClick);
   paintThemeButton();
-}
-
-async function testSsoOnly() {
-  pushLog("info", "Test SSO: invoking getAccessToken (Graph SSO, forMSGraphAccess=true)");
-  try {
-    await getGraphToken(GRAPH_DEFAULT_SCOPES, {
-      mode: "graph",
-      forceFastLane: true,
-      fastLaneTimeoutMs: FAST_LANE_FULL_TIMEOUT_MS,
-    });
-    pushLog("success", "Test SSO: completed without error");
-  } catch (err) {
-    pushLog("error", `Test SSO: ${err?.message ?? String(err)}`);
-  }
-}
-
-async function testDialogAuth() {
-  pushLog("info", "Test Dialog auth: skipping fast lane, going straight to the Office dialog");
-  try {
-    await getGraphToken(GRAPH_DEFAULT_SCOPES, { skipFastLane: true });
-    pushLog("success", "Test Dialog auth: token acquired");
-  } catch (err) {
-    pushLog("error", `Test Dialog auth: ${err?.code ?? "error"} — ${err?.message ?? String(err)}`);
-  }
-}
-
-async function testSsoBareOnly() {
-  pushLog("info", "Test SSO (no Graph): invoking getAccessToken (forMSGraphAccess=false)");
-  try {
-    await getGraphToken(
-      ["openid", "profile", "offline_access", "User.Read", "Calendars.ReadWrite"],
-      { mode: "bare", forceFastLane: true, fastLaneTimeoutMs: 15_000 },
-    );
-    pushLog("success", "Test SSO (no Graph): completed without error");
-  } catch (err) {
-    pushLog("error", `Test SSO (no Graph): ${err?.message ?? String(err)}`);
-  }
-}
-
-async function testLegacySso() {
-  pushLog("info", "Legacy SSO: invoking Office.context.auth.getAccessToken");
-  const ctxAuth = Office?.context?.auth;
-  if (!ctxAuth || typeof ctxAuth.getAccessToken !== "function") {
-    pushLog("warn", "Office.context.auth.getAccessToken not present in this host");
-    console.warn("[sso-legacy] no Office.context.auth");
-    return;
-  }
-  const t0 = performance.now();
-  ctxAuth.getAccessToken(
-    { allowSignInPrompt: true, allowConsentPrompt: true },
-    (result) => {
-      const dt = Math.round(performance.now() - t0);
-      if (result?.status === "succeeded") {
-        const preview = String(result.value ?? "").slice(0, 24);
-        pushLog("success", `Legacy SSO token (${dt}ms) preview=${preview}...`);
-        console.info("[sso-legacy] succeeded", { dt, preview });
-      } else {
-        const err = result?.error ?? {};
-        pushLog(
-          "error",
-          `Legacy SSO FAILED code=${err.code ?? "?"} msg="${err.message ?? "?"}" after ${dt}ms`,
-        );
-        console.error("[sso-legacy] failed", err);
-      }
-    },
-  );
-}
-
-async function testCallbackToken() {
-  pushLog("info", "EWS Callback Token: invoking mailbox.getCallbackTokenAsync");
-  const mailbox = Office?.context?.mailbox;
-  if (!mailbox || typeof mailbox.getCallbackTokenAsync !== "function") {
-    pushLog("warn", "Office.context.mailbox.getCallbackTokenAsync not present");
-    return;
-  }
-  return new Promise((resolve) => {
-    mailbox.getCallbackTokenAsync({ isRest: true }, (result) => {
-      if (result?.status === "succeeded") {
-        const preview = String(result.value ?? "").slice(0, 24);
-        pushLog("success", `EWS callback token acquired (preview=${preview}...)`);
-        console.info("[callback-token] succeeded", preview);
-      } else {
-        pushLog(
-          "error",
-          `EWS callback token failed code=${result?.error?.code ?? "?"} msg="${result?.error?.message ?? "?"}"`,
-        );
-      }
-      resolve();
-    });
-  });
-}
-
-function reloadPane() {
-  pushLog("info", "Reloading iframe");
-  try {
-    if (typeof Office?.context?.ui?.setTrainingAssistanceUrl === "function") {
-      // some hosts don't expose iframe reload — try a soft reload
-    }
-    window.location.reload();
-  } catch (e) {
-    pushLog("error", `reload failed: ${e?.message ?? e}`);
-  }
-}
-
-async function copyLogToClipboard() {
-  if (!logEl) return;
-  const lines = Array.from(logEl.querySelectorAll("li")).map(
-    (li) => `${li.querySelector(".ts")?.textContent ?? ""} ${li.textContent.replace(/^\S+\s*/, "")}`.trim(),
-  );
-  const text = lines.join("\n");
-  try {
-    await navigator.clipboard.writeText(text);
-    pushLog("meta", "log copied to clipboard");
-  } catch (err) {
-    pushLog("warn", `clipboard unavailable: ${err?.message ?? err}`);
-  }
-}
-
-if (testDialogBtn) {
-  testDialogBtn.addEventListener("click", testDialogAuth);
-}
-if (testSsoBtn) {
-  testSsoBtn.addEventListener("click", testSsoOnly);
-}
-if (testSsoBareBtn) {
-  testSsoBareBtn.addEventListener("click", testSsoBareOnly);
-}
-if (testLegacySsoBtn) {
-  testLegacySsoBtn.addEventListener("click", testLegacySso);
-}
-if (testCallbackTokenBtn) {
-  testCallbackTokenBtn.addEventListener("click", () => { testCallbackToken(); });
-}
-if (reloadPaneBtn) {
-  reloadPaneBtn.addEventListener("click", reloadPane);
-}
-if (copyLogBtn) {
-  copyLogBtn.addEventListener("click", copyLogToClipboard);
-}
-if (clearLogBtn) {
-  clearLogBtn.addEventListener("click", () => {
-    while (logEl?.firstChild) logEl.removeChild(logEl.firstChild);
-    pushLog("meta", "log cleared");
-  });
-}
-
-function paintDebugToggle() {
-  if (!debugToggleBtn || !debugSection) return;
-  const visible = !debugSection.classList.contains("hidden");
-  debugToggleBtn.setAttribute("aria-expanded", String(visible));
-  debugToggleBtn.title = visible ? "Hide debug log" : "Show debug log";
-}
-
-function applyDebugVisibility(visible) {
-  if (!debugSection) return;
-  debugSection.classList.toggle("hidden", !visible);
-  paintDebugToggle();
-  try {
-    window.localStorage.setItem(DEBUG_VISIBLE_KEY, visible ? "1" : "0");
-  } catch {}
-}
-
-function readDebugVisibility() {
-  try {
-    const stored = window.localStorage.getItem(DEBUG_VISIBLE_KEY);
-    return stored === "1";
-  } catch {
-    return false;
-  }
-}
-
-if (debugToggleBtn) {
-  debugToggleBtn.addEventListener("click", () => {
-    const visible = !debugSection.classList.contains("hidden");
-    applyDebugVisibility(!visible);
-  });
-}
-
-applyDebugVisibility(readDebugVisibility());
-
-const state = {
-  events: [],
-  removed: new Set(),
-  results: null,
-};
-
-function setStatus(kind, text) {
-  status.className = `status ${kind}`;
-  status.textContent = text;
-  status.classList.remove("hidden");
-}
-
-function clearStatus() {
-  status.classList.add("hidden");
-  status.textContent = "";
-}
-
-function escapeHtml(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  }[c]));
-}
-
-function formatTime(ev) {
-  if (ev.whole_day) return "All day";
-  const start = ev.time ?? "?";
-  if (ev.end_time) return `${start} – ${ev.end_time}`;
-  return start;
-}
-
-function pad(n) {
-  return String(n).padStart(2, "0");
-}
-
-function addHoursToHHMM(hhmm, hours) {
-  const [h, m] = hhmm.split(":").map(Number);
-  const total = h * 60 + m + Math.round(hours * 60);
-  const nh = Math.floor((total / 60) % 24);
-  const nm = total % 60;
-  return `${pad(nh)}:${pad(nm)}`;
-}
-
-function addDaysToISO(yyyymmdd, days) {
-  const d = new Date(`${yyyymmdd}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-function getLocalTimeZone() {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  } catch {
-    return "UTC";
-  }
 }
 
 function mapToGraphFields(ev) {
@@ -374,7 +102,7 @@ function isFastLaneBroken() {
   }
 }
 
-function getOfficeAccessToken(scopes, { mode, timeoutMs } = {}) {
+function getOfficeAccessToken(scopes) {
   return new Promise((resolve, reject) => {
     if (!Office?.auth?.getAccessToken) {
       markFastLaneBroken("not available");
@@ -388,10 +116,10 @@ function getOfficeAccessToken(scopes, { mode, timeoutMs } = {}) {
       allowMultipleSignInPrompt: false,
       scopes,
     };
-    if (mode === "graph") options.forMSGraphAccess = true;
+    options.forMSGraphAccess = true;
     pushLog(
       "info",
-      `fast lane: Office.auth.getAccessToken mode=${mode} forMSGraphAccess=${mode === "graph"} timeoutMs=${timeoutMs}`,
+      `fast lane: Office.auth.getAccessToken timeoutMs=${FAST_LANE_TIMEOUT_MS}`,
     );
 
     let settled = false;
@@ -399,9 +127,12 @@ function getOfficeAccessToken(scopes, { mode, timeoutMs } = {}) {
       if (settled) return;
       settled = true;
       markFastLaneBroken("timed out");
-      pushLog("warn", `fast lane timed out after ${timeoutMs}ms — using the Office dialog instead`);
-      reject(new Error(`SSO timeout after ${timeoutMs}ms (no callback fired)`));
-    }, timeoutMs);
+      pushLog(
+        "warn",
+        `fast lane timed out after ${FAST_LANE_TIMEOUT_MS}ms — using the Office dialog instead`,
+      );
+      reject(new Error(`SSO timeout after ${FAST_LANE_TIMEOUT_MS}ms (no callback fired)`));
+    }, FAST_LANE_TIMEOUT_MS);
 
     Office.auth.getAccessToken(options, (result) => {
       if (settled) return;
@@ -427,17 +158,13 @@ function getOfficeAccessToken(scopes, { mode, timeoutMs } = {}) {
 
 async function getGraphToken(scopes, opts = {}) {
   let useFastLane = !opts.skipFastLane;
-  if (useFastLane && !opts.forceFastLane && isFastLaneBroken()) {
+  if (useFastLane && isFastLaneBroken()) {
     useFastLane = false;
     pushLog("info", "fast lane skipped (Office SSO already known to fail on this host)");
   }
   if (useFastLane) {
     try {
-      const token = await getOfficeAccessToken(scopes, {
-        mode: opts.mode ?? "graph",
-        timeoutMs: opts.fastLaneTimeoutMs ?? FAST_LANE_TIMEOUT_MS,
-      });
-      return token;
+      return await getOfficeAccessToken(scopes);
     } catch (err) {
       console.warn("[sso] fast lane failed", err);
     }
@@ -681,70 +408,17 @@ async function retryOne(idx) {
   renderResults();
 }
 
-function dumpHostFingerprint(info) {
-  try {
-    const diags = Office.context?.mailbox?.diagnostics ?? {};
-    const reqs = Office.context?.requirements ?? null;
-    const ctxAuth = Office.context?.auth ?? null;
-    const keys = (obj) =>
-      obj == null
-        ? "null"
-        : Array.isArray(obj)
-          ? "array"
-          : `Object{${Object.keys(obj).join(",")}}`;
-    pushLog("meta", `navigator.userAgent=${navigator.userAgent}`);
-    pushLog("meta", `navigator.platform=${navigator.platform}`);
-    pushLog(
-      "meta",
-      `info.platform=${info?.platform ?? "?"}; info.host=${info?.host ?? "?"}`,
-    );
-    pushLog(
-      "meta",
-      `hostName=${Office.context?.mailbox?.diagnostics?.hostName ?? "?"} | OWA version=${Office.context?.mailbox?.diagnostics?.owaVersion ?? "?"}`,
-    );
-    pushLog("meta", `Office.context.host=${Office.context?.host ?? "?"}`);
-    pushLog(
-      "meta",
-      `Office.onReady info keys=${keys(info)}`,
-    );
-    pushLog(
-      "meta",
-      `diagnostics keys=${keys(diags)}; hostVersion=${diags?.hostVersion ?? "?"}`,
-    );
-    if (reqs) {
-      const setNames = Array.isArray(reqs)
-        ? reqs
-        : Object.getOwnPropertyNames(reqs ?? {});
-      pushLog(
-        "meta",
-        `context.requirements=${Array.isArray(reqs) ? "array" : "object"} keys=${setNames.join(",") || "(none)"}`,
-      );
-    } else {
-      pushLog("meta", "context.requirements not present");
-    }
-    pushLog(
-      "meta",
-      `legacy Office.context.auth present: ${ctxAuth != null}; has getAccessToken: ${typeof ctxAuth?.getAccessToken === "function"}`,
-    );
-    pushLog(
-      "meta",
-      `mailbox.getCallbackTokenAsync: ${typeof Office.context?.mailbox?.getCallbackTokenAsync === "function"}`,
-    );
-    const hasDialog =
-      typeof Office.context?.ui?.displayDialogAsync === "function";
-    let dialogSet = "unknown";
-    try {
-      dialogSet = Office.context?.requirements?.isSetSupported("DialogApi", "1.1")
-        ? "DialogApi 1.1 supported"
-        : "DialogApi 1.1 not reported";
-    } catch {}
-    pushLog(
-      hasDialog ? "info" : "error",
-      `Office dialog available: ${hasDialog} (${dialogSet}) — this is the sign-in path`,
-    );
-  } catch (e) {
-    pushLog("error", `dumpHostFingerprint threw: ${e?.message ?? e}`);
-  }
+// Clears everything the pane is showing about the current message. The pinned
+// pane survives moving to another email, so its contents have to be reset when
+// the selected item changes or it would still be describing the old one.
+function resetPane() {
+  state.events = [];
+  state.removed.clear();
+  state.results = null;
+  createBtn.classList.add("hidden");
+  results.classList.add("hidden");
+  eventsEl.innerHTML = "";
+  clearStatus();
 }
 
 Office.onReady((info) => {
@@ -752,8 +426,6 @@ Office.onReady((info) => {
     "info",
     `Office.onReady host=${info.host} platform=${info.platform ?? "?"}`,
   );
-  dumpHostFingerprint(info);
-
   pushLog(
     "info",
     `auth.getAccessToken available: ${typeof Office?.auth?.getAccessToken === "function"}${
@@ -769,15 +441,31 @@ Office.onReady((info) => {
   initTheme();
   paintThemeButton();
 
+  // With SupportsPinning the pane stays open across messages, so react to the
+  // selection changing instead of being torn down and rebuilt each time.
+  if (typeof Office.context.mailbox.addHandlerAsync === "function") {
+    Office.context.mailbox.addHandlerAsync(
+      Office.EventType.ItemChanged,
+      () => {
+        pushLog("info", "selected item changed; clearing the pane");
+        resetPane();
+        btn.disabled = false;
+      },
+      (result) => {
+        if (result.status !== Office.AsyncResultStatus.Succeeded) {
+          pushLog(
+            "warn",
+            `ItemChanged handler not registered: ${result.error?.message ?? "?"}`,
+          );
+        }
+      },
+    );
+  }
+
   btn.disabled = false;
   btn.addEventListener("click", async () => {
     btn.disabled = true;
-    createBtn.classList.add("hidden");
-    clearStatus();
-    results.classList.add("hidden");
-    state.events = [];
-    state.removed.clear();
-    state.results = null;
+    resetPane();
 
     try {
       const item = Office.context.mailbox.item;

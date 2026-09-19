@@ -379,6 +379,29 @@ https://schedule-gen-from-email.vercel.app/outlook-addin/manifest.xml
    need to download the manifest to disk first via
    `https://schedule-gen-from-email.vercel.app/outlook-addin/manifest.xml`).
 
+### Keeping the pane open
+
+The manifest declares `<SupportsPinning>true</SupportsPinning>` (Mailbox
+requirement set 1.5, inside the `VersionOverridesV1_1` block — the schema
+rejects it in `VersionOverridesV1_0`). Click the **pin** icon in the pane's
+header and it stays open as you move between messages instead of being torn
+down on every selection change.
+
+The pane then has to notice the selection changing itself, so `app.js`
+registers an `Office.EventType.ItemChanged` handler that clears the previously
+extracted events. Without it the pinned pane would keep showing results for an
+email you had already navigated away from.
+
+### Icons
+
+`assets/icon.svg` is the single source of truth; `npm run icons` rasterises it
+to the five sizes the manifest references (requires `brew install librsvg`).
+
+Render every size from the vector rather than downscaling a detailed image:
+the icons used to be downscales of a 697px illustration, which looked right at
+128px in the install dialog but turned to mush at the 16/32px sizes the ribbon
+uses, so the two looked like different add-ins.
+
 ### Files
 
 | Path | Purpose |
@@ -606,35 +629,20 @@ error message and a **Retry** button; successful rows show **"Created —
 open your Outlook calendar to view"**. One failure does not block the
 others.
 
-### Debug log (Outlook on Mac or any environment without DevTools)
+### Diagnostics
 
-The add-in pane ships with a visible **Debug** section at the bottom.
-It is hidden until a log entry is appended. Each entry is a coloured
-breadcrumb: timestamped, prefixed by level, and reachable from the
-pane without DevTools.
+The add-in logs each step to the browser console with an
+`[addCalEvent:<level>]` prefix: Office.js availability, which auth lane was
+used, every stage of the sign-in dialog, the Graph POST and its response, and
+any error code and message.
 
-| Button | Action |
-|--------|--------|
-| **Test Dialog auth** | Skips the Office SSO fast lane and runs the Office dialog sign-in directly — no Graph POST. This is the path the add-in actually uses on Mac, so it is the fastest way to verify auth without extracting an email first. |
-| **Test SSO** | Calls `Office.auth.getAccessToken` only — no Graph POST. Surfaces consent errors, sign-in prompts, host compatibility issues, and the 13001/13004/13005/13006/13012 codes that mean a dialog was rejected, suppressed, or never offered. |
-| **Copy log** | Copies the entire log to the clipboard so you can paste it back here. |
-| **Clear** | Empties the panel. |
+On Outlook for Mac, open the console with **Developer ▸ Web Inspector** on the
+task pane (enable the Develop menu in Safari first, since the pane runs in a
+WebKit WebView).
 
-Log contents cover: Office.js / `Office.auth.getAccessToken`
-availability, scope requested, token-acquired token prefix, Graph
-POST/response, every error code + message + trace. The first four
-lines are emitted at startup so the panel tells you — without you
-clicking anything — whether the add-in loaded in a real Office host.
-
-Typical failures:
-
-| Code | Meaning | Fix |
-|------|---------|-----|
-| 13001 | Office.js not authorized to call `getAccessToken` | Manifest's `<WebApplicationInfo>` is missing or the Application ID URI in Entra doesn't match `<Resource>` exactly |
-| 13004 | User declined the consent dialog | They need to click **Accept** once; on managed devices admins may have hidden this |
-| 13005 | Consent dialog suppressed (tenant policy) | Grant admin consent in Entra for the five delegated permissions |
-| 13006 | No Office identity (Outlook signed out) | Sign in to Outlook first |
-| 13012 | MFA / Conditional Access triggered | Dialog flashed and closed; user must complete MFA in Office or auth gets forwarded silently |
+> Earlier versions rendered this log into a panel inside the task pane, for
+> hosts with no DevTools. That panel is gone — it was needed to diagnose the
+> Office SSO hang, which is fixed, and it consumed most of the pane.
 
 ## Theming
 

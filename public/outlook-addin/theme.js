@@ -54,6 +54,10 @@ function clearToken(name) {
   document.documentElement.style.removeProperty(name);
 }
 
+// Only the neutral surface colours come from the host. Accents stay with the
+// Fluent palette in app.css: officeTheme.accent1 is a brand highlight and is
+// far too saturated to fill a button with, which is what made the pane look
+// unlike the rest of Outlook in dark mode.
 function applyTokens(palette) {
   const root = document.documentElement;
   setToken("--bg", palette.bg);
@@ -61,25 +65,6 @@ function applyTokens(palette) {
   setToken("--surface", palette.surface);
   setToken("--surface-fg", palette.surfaceFg);
   setToken("--border", palette.border);
-  setToken("--accent", palette.accent);
-
-  const accentRgb = hexToRgb(palette.accent);
-  const hover = `rgb(${Math.max(
-    0,
-    Math.round(accentRgb.r * 0.85),
-  )}, ${Math.max(0, Math.round(accentRgb.g * 0.85))}, ${Math.max(
-    0,
-    Math.round(accentRgb.b * 0.85),
-  )})`;
-  setToken("--accent-hover", hover);
-  setToken(
-    "--accent-on",
-    relativeLuminance(accentRgb) < 0.5 ? "#ffffff" : "#000000",
-  );
-  setToken(
-    "--accent-soft",
-    `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.18)`,
-  );
 
   const dark = isDarkBackground(palette.bg);
   root.dataset.theme = dark ? "dark" : "light";
@@ -93,10 +78,6 @@ function clearRuntimeTokens() {
     "--surface",
     "--surface-fg",
     "--border",
-    "--accent",
-    "--accent-hover",
-    "--accent-on",
-    "--accent-soft",
   ]) {
     clearToken(name);
   }
@@ -111,7 +92,6 @@ function applyOfficeTheme() {
     surface: theme.controlBackgroundColor,
     surfaceFg: theme.controlForegroundColor,
     border: theme.controlBorderColor,
-    accent: theme.accent1,
   });
   return true;
 }

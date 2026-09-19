@@ -4,83 +4,44 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Add Cal Event</title>
+    <link rel="icon" href="assets/icon-32.png" />
     <link rel="stylesheet" href="app.css" />
     <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
   </head>
   <body>
     <header class="app-header">
-      <h1>Add Cal Event</h1>
+      <img class="app-icon" src="assets/icon-64.png" alt="" width="28" height="28" />
+      <div class="app-heading">
+        <h1>Add Cal Event</h1>
+        <p class="subtitle">Extract calendar events from this email and add them to your calendar.</p>
+      </div>
       <button
         id="theme-toggle"
-        class="theme-toggle"
+        class="icon-btn"
         type="button"
         aria-label="Toggle theme"
         title="Switch theme"
       >
         <span id="theme-icon"></span>
       </button>
-      <button
-        id="debug-toggle"
-        class="theme-toggle"
-        type="button"
-        aria-label="Show debug log"
-        aria-expanded="false"
-        title="Show debug log"
-      >
-        <span id="debug-toggle-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2 8 5"/><path d="M16 2 16 5"/><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 10h.01"/><path d="M12 10h.01"/><path d="M16 10h.01"/><path d="M8 14h.01"/><path d="M12 14h.01"/><path d="M16 14h.01"/><path d="M8 18h.01"/><path d="M12 18h.01"/><path d="M16 18h.01"/></svg>
-        </span>
-      </button>
-      <p class="subtitle">Extract calendar events from this email and add them to your calendar.</p>
     </header>
 
     <main>
-      <button id="extract-btn" class="primary" type="button">
-        Extract events from this email
-      </button>
+      <div class="actions">
+        <button id="extract-btn" class="primary" type="button">
+          Extract events from this email
+        </button>
 
-      <button id="create-btn" class="primary create hidden" type="button">
-        Create in calendar
-      </button>
+        <button id="create-btn" class="primary create hidden" type="button">
+          Create in calendar
+        </button>
+      </div>
 
       <section id="status" class="status hidden" aria-live="polite"></section>
 
       <section id="results" class="results hidden">
         <h2 id="results-heading">Events</h2>
         <div id="events"></div>
-      </section>
-
-      <section id="debug" class="debug hidden" aria-label="Debug log">
-        <header class="debug-head">
-          <h2>Debug</h2>
-          <div class="debug-actions">
-            <button id="test-dialog-btn" class="debug-btn" type="button" title="Skip Office SSO and open the Microsoft sign-in dialog directly. This is the path the add-in actually uses.">
-              Test Dialog auth
-            </button>
-            <button id="test-sso-btn" class="debug-btn" type="button" title="getAccessToken with forMSGraphAccess (Graph SSO). Times out after 30s.">
-              Test SSO
-            </button>
-            <button id="test-sso-bare-btn" class="debug-btn" type="button" title="getAccessToken WITHOUT forMSGraphAccess. Use to isolate whether the hang is in the Graph SSO step.">
-              Test SSO (no Graph)
-            </button>
-            <button id="test-legacy-sso-btn" class="debug-btn" type="button" title="Use legacy Office.context.auth.getAccessToken if present. Useful on Mac legacy Outlook.">
-              Legacy SSO
-            </button>
-            <button id="test-callback-token-btn" class="debug-btn" type="button" title="Use Office.context.mailbox.getCallbackTokenAsync for an EWS callback token (Exchange-only path; works on legacy Mac).">
-              EWS Callback Token
-            </button>
-            <button id="reload-pane-btn" class="debug-btn" type="button" title="Reload the add-in iframe (sometimes clears stuck dialogs on Mac).">
-              Reload pane
-            </button>
-            <button id="copy-log-btn" class="debug-btn" type="button" title="Copy log entries to clipboard">
-              Copy log
-            </button>
-            <button id="clear-log-btn" class="debug-btn" type="button" title="Clear log">
-              Clear
-            </button>
-          </div>
-        </header>
-        <ol id="log" class="log"></ol>
       </section>
     </main>
 
