@@ -175,8 +175,9 @@ async function popupLoginOnce(config) {
   const verifier = makeCodeVerifier();
   const challenge = await makeCodeChallenge(verifier);
   const state = makeState();
-  safeStorageSet(STORAGE_VERIFIER_KEY, verifier);
-  safeStorageSet(STORAGE_STATE_KEY, state);
+  safeLocalSet(STORAGE_VERIFIER_KEY, verifier);
+  safeLocalSet(STORAGE_STATE_KEY, state);
+  clearCallbackResult();
 
   const url = new URL(config.authorization_url);
   url.searchParams.set("client_id", config.client_id);
@@ -192,13 +193,60 @@ async function popupLoginOnce(config) {
   return { url: url.toString(), state };
 }
 
-function awaitPopupMessage(expectedState, timeoutMs = 90_000) {
+function safeLocalGetJson(key) {
+  try {
+    const raw = window.localStorage?.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function clearCallbackResult() {
+  try {
+    window.localStorage?.removeItem("addCalEvent.callbackResult");
+  } catch {}
+}
+
+function awaitCallbackResult(expectedState, timeoutMs = 120_000) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const startedAt = Date.now();
+
+    function checkLocal() {
+      const stored = safeLocalGetJson("addCalEvent.callbackResult");
+      if (!stored) return false;
+      if (typeof stored.at === "number" && Date.now() - stored.at > 5 * 60 * 1000) {
+        clearCallbackResult();
+        return false;
+      }
+      if (expectedState && stored.state && stored.state !== expectedState) {
+        return false;
+      }
+      return stored;
+    }
+
+    const localPoll = setInterval(() => {
+      if (settled) return;
+      const stored = checkLocal();
+      if (stored) {
+        settled = true;
+        clearInterval(localPoll);
+        clearTimeout(timer);
+        window.removeEventListener("message", onMessage);
+        resolve(stored);
+      }
+    }, 600);
+
     const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      clearInterval(localPoll);
       window.removeEventListener("message", onMessage);
       reject(
         new Error(
-          `Popup did not deliver an auth code within ${Math.round(timeoutMs / 1000)}s. The popup may have been blocked, the user cancelled, or the consent dialog stalled.`,
+          `Popup did not deliver an auth code within ${Math.round((Date.now() - startedAt) / 1000)}s.`,
         ),
       );
     }, timeoutMs);
@@ -207,6 +255,9 @@ function awaitPopupMessage(expectedState, timeoutMs = 90_000) {
       if (event.origin !== window.location.origin) return;
       const data = event.data;
       if (!data || data.source !== "addCalEvent.auth") return;
+      if (settled) return;
+      settled = true;
+      clearInterval(localPoll);
       clearTimeout(timer);
       window.removeEventListener("message", onMessage);
       resolve(data);
@@ -239,8 +290,8 @@ export async function msalLogin(scopes, opts = {}) {
     "width=520,height=640,menubar=no,toolbar=no,location=no,status=no",
   );
   if (!popup) {
-    safeSessionSet(STORAGE_VERIFIER_KEY, null);
-    safeSessionSet(STORAGE_STATE_KEY, null);
+    safeLocalSet(STORAGE_VERIFIER_KEY, null);
+    safeLocalSet(STORAGE_STATE_KEY, null);
     const err = new Error(
       "Popup was blocked. Allow popups for this origin and try again, or click 'Open sign-in here' below.",
     );
@@ -251,7 +302,7 @@ export async function msalLogin(scopes, opts = {}) {
 
   let payload;
   try {
-    payload = await awaitPopupMessage(state);
+    payload = await awaitCallbackResult(state);
   } catch (err) {
     try { popup.close(); } catch {}
     throw err;
@@ -259,16 +310,18 @@ export async function msalLogin(scopes, opts = {}) {
   try { popup.close(); } catch {}
 
   if (!payload?.ok) {
-    safeStorageSet(STORAGE_VERIFIER_KEY, null);
-    safeStorageSet(STORAGE_STATE_KEY, null);
+    safeLocalSet(STORAGE_VERIFIER_KEY, null);
+    safeLocalSet(STORAGE_STATE_KEY, null);
+    clearCallbackResult();
     throw new Error(
       `PKCE callback failed: ${payload?.error ?? "unknown"} (${payload?.error_description ?? ""})`.trim(),
     );
   }
 
-  const verifier = safeStorageGet(STORAGE_VERIFIER_KEY);
-  safeStorageSet(STORAGE_VERIFIER_KEY, null);
-  safeStorageSet(STORAGE_STATE_KEY, null);
+  const verifier = safeLocalGet(STORAGE_VERIFIER_KEY);
+  safeLocalSet(STORAGE_VERIFIER_KEY, null);
+  safeLocalSet(STORAGE_STATE_KEY, null);
+  clearCallbackResult();
 
   if (!payload.code || !verifier) {
     throw new Error("PKCE callback delivered no code or verifier was cleared.");
@@ -290,7 +343,8 @@ export async function msalLogin(scopes, opts = {}) {
 }
 
 export function resetMsalCache() {
-  safeStorageSet(STORAGE_STATE_KEY, null);
-  safeStorageSet(STORAGE_VERIFIER_KEY, null);
+  safeLocalSet(STORAGE_STATE_KEY, null);
+  safeLocalSet(STORAGE_VERIFIER_KEY, null);
+  clearCallbackResult();
   clearTokens();
 }

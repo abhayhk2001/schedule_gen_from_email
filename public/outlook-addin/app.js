@@ -454,14 +454,26 @@ async function createGraphEvent(ev, { retry = true } = {}) {
 
 async function createEvents(events) {
   const results = [];
+  let firstPopupBlocked = null;
   for (const ev of events) {
     try {
       const { itemId, webLink } = await createGraphEvent(ev);
       results.push({ ev, status: "success", itemId, webLink });
     } catch (err) {
-      results.push({ ev, status: "error", error: err?.message ?? String(err) });
+      const row = {
+        ev,
+        status: "error",
+        error: err?.message ?? String(err),
+        errorCode: err?.code,
+        fallbackUrl: err?.fallbackUrl,
+      };
+      results.push(row);
+      if (err?.code === "popup_blocked") {
+        firstPopupBlocked = firstPopupBlocked ?? err;
+      }
     }
   }
+  if (firstPopupBlocked) throw firstPopupBlocked;
   return results;
 }
 
@@ -601,6 +613,23 @@ function renderResults() {
       err.className = "error-text";
       err.textContent = r.error;
       body.appendChild(err);
+
+      if (r.errorCode === "popup_blocked" && r.fallbackUrl) {
+        const open = document.createElement("button");
+        open.type = "button";
+        open.className = "retry-btn";
+        open.textContent = "Open sign-in here";
+        open.style.marginTop = "6px";
+        open.addEventListener("click", () => {
+          const opened = window.open(r.fallbackUrl, "_blank");
+          if (!opened) {
+            pushLog("warn", "popup-blocked fallback click also blocked; copy the URL manually");
+          } else {
+            pushLog("info", "sign-in tab opened — complete it, then click Retry");
+          }
+        });
+        body.appendChild(open);
+      }
 
       const retry = document.createElement("button");
       retry.type = "button";

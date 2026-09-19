@@ -58,9 +58,17 @@
               );
             }
           } catch (e) {}
+          try {
+            sessionStorage.setItem(
+              "addCalEvent.callbackResult",
+              JSON.stringify(
+                Object.assign({ at: Date.now() }, payload),
+              ),
+            );
+          } catch (e) {}
           setTimeout(function () {
             try { window.close(); } catch (e) {}
-          }, 600);
+          }, 800);
         }
 
         if (error) {
