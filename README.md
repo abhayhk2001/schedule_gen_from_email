@@ -85,6 +85,18 @@ endpoint.
 
 ## Deploy
 
+Pushing to `main` deploys: the Vercel GitHub integration builds and
+promotes to production automatically. The steps below cover deploying by
+hand, and the one-time project setup.
+
+The Vercel CLI is a devDependency, so `npm run deploy` and `npm run dev`
+resolve it from `node_modules/.bin` — no global install needed. Sign in
+once before the first manual deploy:
+
+```bash
+npx vercel login
+```
+
 1. Set the secret(s) in your Vercel project:
 
    ```bash
@@ -105,10 +117,12 @@ endpoint.
    echo "https://api.minimax.io/v1" | vercel env add MINIMAX_BASE_URL production
    ```
 
-4. Deploy:
+4. Deploy by hand (typechecks and runs the tests first, then promotes to
+   production). Note this ships your **working tree**, which may differ
+   from what is on `main`:
 
    ```bash
-   vercel --prod
+   npm run deploy
    ```
 
 > **Important — `package.json` has no `"type": "module"`.** Vercel's @vercel/node
