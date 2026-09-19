@@ -1,4 +1,5 @@
-import { REDIRECT_URI } from "./oauth-config.js";
+const DEFAULT_REDIRECT_URI =
+  "https://schedule-gen-from-email.vercel.app/outlook-addin/auth-callback.html";
 
 const CONFIG_CACHE_KEY = "addCalEvent.oauth.configCache";
 const CONFIG_TTL_MS = 5 * 60 * 1000;
@@ -157,7 +158,7 @@ async function popupLoginOnce(config) {
   const url = new URL(config.authorization_url);
   url.searchParams.set("client_id", config.client_id);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("redirect_uri", config.redirect_uri ?? REDIRECT_URI);
+  url.searchParams.set("redirect_uri", config.redirect_uri ?? DEFAULT_REDIRECT_URI);
   url.searchParams.set("response_mode", "query");
   url.searchParams.set("scope", config.scopes.join(" "));
   url.searchParams.set("code_challenge", challenge);
@@ -249,7 +250,7 @@ export async function msalLogin(scopes, opts = {}) {
   const data = await exchangeViaApi({
     code: payload.code,
     code_verifier: verifier,
-    redirect_uri: config.redirect_uri ?? REDIRECT_URI,
+    redirect_uri: config.redirect_uri ?? DEFAULT_REDIRECT_URI,
   });
 
   if (!data?.access_token) {
