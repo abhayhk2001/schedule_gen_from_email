@@ -52,6 +52,56 @@ if (themeBtn) {
   paintThemeButton();
 }
 
+const state = {
+  events: [],
+  removed: new Set(),
+  results: null,
+};
+
+function setStatus(kind, text) {
+  status.className = `status ${kind}`;
+  status.textContent = text;
+  status.classList.remove("hidden");
+}
+
+function clearStatus() {
+  status.classList.add("hidden");
+  status.textContent = "";
+}
+
+function formatTime(ev) {
+  if (ev.whole_day) return "All day";
+  const start = ev.time ?? "?";
+  if (ev.end_time) return `${start} – ${ev.end_time}`;
+  return start;
+}
+
+function pad(n) {
+  return String(n).padStart(2, "0");
+}
+
+function addHoursToHHMM(hhmm, hours) {
+  const [h, m] = hhmm.split(":").map(Number);
+  const total = h * 60 + m + Math.round(hours * 60);
+  const nh = Math.floor((total / 60) % 24);
+  const nm = total % 60;
+  return `${pad(nh)}:${pad(nm)}`;
+}
+
+function addDaysToISO(yyyymmdd, days) {
+  const d = new Date(`${yyyymmdd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function getLocalTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
 function mapToGraphFields(ev) {
   const subject = ev.event_name || "Untitled event";
   const body = ev.description || "";
