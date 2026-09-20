@@ -329,6 +329,13 @@ function renderEvents() {
     h3.textContent = ev.event_name ?? "Untitled event";
     body.appendChild(h3);
 
+    if (ev.location) {
+      const location = document.createElement("p");
+      location.className = "location";
+      location.textContent = ev.location;
+      body.appendChild(location);
+    }
+
     const when = document.createElement("p");
     when.className = "when";
     const date = ev.date ?? "Unknown date";
@@ -341,13 +348,6 @@ function renderEvents() {
       when.appendChild(tzEl);
     }
     body.appendChild(when);
-
-    if (ev.description) {
-      const desc = document.createElement("p");
-      desc.className = "desc";
-      desc.textContent = ev.description;
-      body.appendChild(desc);
-    }
 
     row.appendChild(body);
 
@@ -402,6 +402,13 @@ function renderResults() {
     const h3 = document.createElement("h3");
     h3.textContent = r.ev.event_name ?? "Untitled event";
     body.appendChild(h3);
+
+    if (r.ev.location) {
+      const location = document.createElement("p");
+      location.className = "location";
+      location.textContent = r.ev.location;
+      body.appendChild(location);
+    }
 
     const when = document.createElement("p");
     when.className = "when";

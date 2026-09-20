@@ -36,6 +36,7 @@ describe("lib/extract.ts — runExtraction", () => {
             time: "13:00",
             timezone: "America/Chicago",
             event_name: "Career Fair",
+            location: "Illini Union, 1401 W Green St, Urbana",
             description: "Bring resumes.",
             whole_day: false,
             end_date: null,
@@ -47,6 +48,7 @@ describe("lib/extract.ts — runExtraction", () => {
     const result = await runExtraction(client, "m", "hi");
     expect(result.events).toHaveLength(1);
     expect(result.events[0].event_name).toBe("Career Fair");
+    expect(result.events[0].location).toBe("Illini Union, 1401 W Green St, Urbana");
     expect(result.events[0].end_time).toBe("17:00");
     expect(result.events[0].whole_day).toBe(false);
   });
@@ -114,6 +116,7 @@ describe("lib/extract.ts — runExtraction", () => {
         "time",
         "timezone",
         "event_name",
+        "location",
         "description",
       ]),
     );
@@ -140,5 +143,27 @@ describe("lib/extract.ts — runExtraction", () => {
     expect(result.events[0].whole_day).toBe(true);
     expect(result.events[0].time).toBeNull();
     expect(result.events[0].end_time).toBeNull();
+  });
+
+  it("parses location='Virtual' verbatim for online-only events", async () => {
+    const client = makeMockClient(
+      JSON.stringify({
+        events: [
+          {
+            date: "2026-11-02",
+            time: "09:00",
+            timezone: "America/New_York",
+            event_name: "Planning sync",
+            location: "Virtual",
+            description: "Weekly planning over Teams.",
+            whole_day: false,
+            end_date: null,
+            end_time: "09:30",
+          },
+        ],
+      }),
+    );
+    const result = await runExtraction(client, "m", "hi");
+    expect(result.events[0].location).toBe("Virtual");
   });
 });

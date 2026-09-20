@@ -3,6 +3,7 @@ export interface Event {
   time: string | null;
   timezone: string | null;
   event_name: string | null;
+  location: string | null;
   description: string | null;
   whole_day: boolean;
   end_date: string | null;

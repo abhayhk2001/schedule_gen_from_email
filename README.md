@@ -549,7 +549,7 @@ useless without the verifier.
 
 1. Register an app in **Microsoft Entra admin center** →
    *Applications → App registrations → New registration*.
-   - **Name**: `Email Event Extractor` (or similar).
+   - **Name**: `Event Extractor` (or similar).
    - **Supported account types**: *Accounts in any organizational directory* (multi-tenant) OR *Single tenant* if you prefer. Default in this codebase is multi-tenant (`/common`).
    - **Redirect URI**: leave blank for now (Office handles that itself).
 2. Note the **Application (client) ID** from the *Overview* blade —

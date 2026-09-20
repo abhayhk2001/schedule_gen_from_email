@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Add Cal Event — auth callback</title>
+    <title>Event Extractor — auth callback</title>
     <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
     <style>
       :root { color-scheme: light dark; }
@@ -63,7 +63,7 @@
         } else if (!code) {
           if (titleEl) titleEl.textContent = "Auth callback received no code";
           if (bodyEl) bodyEl.textContent =
-            "This page is the auth callback for Add Cal Event. If you reached it directly, you can close this window.";
+            "This page is the auth callback for Event Extractor. If you reached it directly, you can close this window.";
           if (detailEl) detailEl.textContent = window.location.href;
           payload = { ok: false, error: "missing_code", state: state };
         } else {

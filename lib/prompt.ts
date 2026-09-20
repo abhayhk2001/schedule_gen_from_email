@@ -9,6 +9,7 @@ Fields per event:
 - time:        24h HH:MM, the start time. Null when whole_day=true.
 - timezone:    IANA name inferred from location/sender (e.g. "America/Chicago"). Null if not inferable.
 - event_name:  short title.
+- location:    venue, address, or room. Literal "Virtual" for online-only events. Null if neither can be inferred.
 - description: one-sentence summary.
 - whole_day:   true when the entry has NO specific time-of-day on that date.
 - end_date:    ISO YYYY-MM-DD, the end date. Null when the entry spans only one day.
@@ -35,9 +36,14 @@ Rules:
 5. A bare registration deadline, RSVP date, or "registration closes on ..." is
    NOT a calendar event. Skip it.
 
-6. If no event is mentioned, return { "events": [] }.
+6. If the event is online only — Zoom, Teams, Google Meet, WebEx, or text like
+   "virtual", "online", "join via the link" with no physical venue mentioned —
+   set location to the literal string "Virtual". If both a venue and a virtual
+   option are mentioned, prefer the physical venue.
 
-7. Resolve relative phrases ("tomorrow", "next Tuesday") using today's date,
+7. If no event is mentioned, return { "events": [] }.
+
+8. Resolve relative phrases ("tomorrow", "next Tuesday") using today's date,
    provided below. Convert "3:00 PM" to "15:00". Never invent fields.
 
 Return ONLY the JSON object, no prose or markdown.`;
@@ -57,6 +63,7 @@ export const responseSchema = {
           "time",
           "timezone",
           "event_name",
+          "location",
           "description",
           "whole_day",
           "end_date",
@@ -80,6 +87,11 @@ export const responseSchema = {
           event_name: {
             type: ["string", "null"],
             description: "Short title for the event.",
+          },
+          location: {
+            type: ["string", "null"],
+            description:
+              'Venue, address, or room. Literal "Virtual" for online-only events. Null if neither can be inferred.',
           },
           description: {
             type: ["string", "null"],
