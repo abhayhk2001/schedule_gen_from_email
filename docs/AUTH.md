@@ -89,10 +89,9 @@ Two properties make this host-agnostic where the old flow was not:
 |------|---------|
 | `lib/oauth-config.ts` | Shared server-side auth constants. Reads `OAUTH_AUTHORITY` (defaults to `https://login.microsoftonline.com/common`). Exports `GRAPH_DEFAULT_SCOPES`, `REDIRECT_URI`, `AUTHORITY`, `AUTHZ_URL`, `TOKEN_URL`. |
 | `api/auth-config.ts` | Public-config endpoint (GET). Returns `{client_id, authority, authorization_url, token_url, redirect_uri, scopes}`. The pane fetches this instead of having `client_id` compiled into `msal.js`. |
-| `api/exchange-token.ts` | **Retained but no longer called.** Server-side PKCE exchange. It is the working path *if* the Azure redirect URI is ever re-registered as "Mobile and desktop applications"; with the current SPA registration Entra rejects it (see §9). Do not re-wire it without changing the registration first. |
 | `public/outlook-addin/auth-start.html` | Same-origin shim. `displayDialogAsync` requires its initial URL to be on the add-in's own domain, so the pane passes the Entra `/authorize` URL as `?url=` and this page redirects to it. Refuses any target that is not `https://login.microsoftonline.com/`. |
 | `public/outlook-addin/auth-callback.html` | Entra's redirect target. Loads `office.js`, reads `code`/`error`/`state` from the query string, and hands `{ok, code, state}` to the pane with `Office.context.ui.messageParent`. Does **not** validate `state` itself — the pane holds the expected value and compares. |
-| `public/outlook-addin/msal.js` | The whole PKCE flow: `loadConfig` → cached token → refresh → Office dialog → direct token exchange. Pure browser code, no imports, no dependencies. Exports `msalLogin(scopes, opts)` and `resetMsalCache()`. |
+| `public/outlook-addin/msal.js` | The whole PKCE flow: `loadConfig` → cached token → refresh → Office dialog → direct token exchange. Pure browser code, no imports, no dependencies. Exports `msalLogin(scopes, opts)` and `invalidateAccessToken()`. |
 
 ### 3.2 Consumers
 
@@ -113,7 +112,7 @@ Three defects, each sufficient on its own:
 
 1. **Cross-browser gap (fatal, unfixable client-side).** The add-in runs in Outlook's WebView; `window.open` escaping that WebView opens the user's default browser. When that browser is Firefox, consent completes in a process that shares no `localStorage` and no `window.opener` with the pane. The auth code is simply unreachable. §12 of the previous revision of this document acknowledged the constraint and then depended on it anyway.
 2. **The polling bridge was never wired up.** `4106072` claimed `auth-callback.html` writes the result to `localStorage`; it wrote to **`sessionStorage`**, while `msal.js` polled **`localStorage`**. The same split silently disabled the CSRF `state` check (pane wrote local, callback read session, so `expectedState` was always `""`) and the silent-refresh path (`tryRefresh` read the refresh token from session, `storeTokens` wrote it to local — `tryRefresh` had never once succeeded).
-3. **The token exchange would have been rejected anyway.** The redirect URI is registered as a Single-page application, and `api/exchange-token.ts` redeemed the code from the server with no `Origin` header. Entra answers that with `AADSTS9002327`. This stayed invisible only because no real code ever reached the endpoint.
+3. **The token exchange would have been rejected anyway.** The redirect URI is registered as a Single-page application, and the old `api/exchange-token.ts` redeemed the code from the server with no `Origin` header. Entra answers that with `AADSTS9002327`. This stayed invisible only because no real code ever reached the endpoint. That endpoint has since been deleted — the exchange belongs in the browser as long as the registration stays SPA (§9).
 
 ### 4.3 The current design
 
@@ -173,7 +172,6 @@ The old `popup_blocked` code and everything built on it (the global "Open sign-i
 | `/api/extract-event` | POST | LLM extraction of events from email body | none (open) |
 | `/api/manifest.xml` | GET (rewrite) | serves `/outlook-addin/manifest.xml` | none |
 | `/api/auth-config` | GET | returns `{client_id, authority, authorization_url, token_url, redirect_uri, scopes}` | none (public) |
-| `/api/exchange-token` | POST | **not called** — see §3.1 and §9 | none (PKCE) |
 
 The token exchange itself goes **straight from the pane to `https://login.microsoftonline.com/{authority}/oauth2/v2.0/token`**, not through this deployment.
 
@@ -187,7 +185,7 @@ The token exchange itself goes **straight from the pane to `https://login.micros
    ```
    Off-by-one (case, trailing slash, `http` vs `https`) is the single most common cause of `AADSTS50011`.
 
-   > **The platform type is load-bearing.** "Single-page application" makes Entra enforce cross-origin token redemption: the `/token` call must carry an `Origin` header, which only a browser can supply. That is why `msal.js` redeems the code itself and `api/exchange-token.ts` sits unused. Re-wiring the exchange to the server without first moving this redirect URI to the **Mobile and desktop applications** platform (and enabling *Allow public client flows*) will fail with:
+   > **The platform type is load-bearing.** "Single-page application" makes Entra enforce cross-origin token redemption: the `/token` call must carry an `Origin` header, which only a browser can supply. That is why `msal.js` redeems the code itself, and why the server-side `api/exchange-token.ts` was deleted rather than kept around. Re-introducing a server-side exchange without first moving this redirect URI to the **Mobile and desktop applications** platform (and enabling *Allow public client flows*) will fail with:
    > ```
    > AADSTS9002327: Tokens issued for the 'Single-Page Application' client-type
    > may only be redeemed via cross-origin requests.
@@ -205,7 +203,7 @@ The token exchange itself goes **straight from the pane to `https://login.micros
 
 | Name | Required | Default | Used by |
 |------|----------|---------|---------|
-| `AZURE_CLIENT_ID` | yes | — | `scripts/build-manifest.mjs`, `api/auth-config.ts`, `api/exchange-token.ts` |
+| `AZURE_CLIENT_ID` | yes | — | `scripts/build-manifest.mjs`, `api/auth-config.ts` |
 | `OPENAI_API_KEY` | yes (production) | — | `api/extract-event.ts` (OpenAI provider) |
 | `MINIMAX_API_KEY` | yes (production, alt provider) | — | `api/extract-event.ts` (MiniMax provider) |
 | `VERCEL_API_FUNCTION_BUNDLING` | yes | — | build bundler |

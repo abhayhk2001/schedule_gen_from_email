@@ -22,33 +22,44 @@ endpoint.
 ```
 .
 ├── api/
-│   └── extract-event.ts     # POST /api/extract-event handler
+│   ├── extract-event.ts     # POST /api/extract-event handler
+│   └── auth-config.ts       # GET /api/auth-config — public OAuth config for the add-in
 ├── lib/
 │   ├── router.ts            # picks provider based on requested model
 │   ├── openai.ts            # OpenAI extraction (gpt-4o-mini)
 │   ├── minimax.ts           # MiniMax extraction (MiniMax-M3)
 │   ├── extract.ts           # shared chat-completion + JSON-parse helper
 │   ├── errors.ts            # ConfigError class
+│   ├── oauth-config.ts      # authority / redirect URI / scope constants
 │   ├── manifest-template.ts # Outlook manifest XML template (__AZURE_CLIENT_ID__ placeholder)
 │   ├── prompt.ts            # shared system prompt + JSON schema + model list
-│   └── types.ts             # Event / request / response types
+│   └── types.ts             # Event / response types
 ├── tests/
 │   ├── handler.test.ts      # 12 input-validation cases + error-wrapping tests
 │   ├── router.test.ts       # dispatch tests
 │   ├── providers.test.ts    # missing-key ConfigError tests
 │   └── extract.test.ts      # runExtraction helper tests
+├── scripts/
+│   ├── build-manifest.mjs   # build step: substitutes $AZURE_CLIENT_ID into the manifest
+│   ├── build-icons.sh       # rasterises assets/icon.svg to all five icon sizes
+│   └── smoke-pane.mjs       # loads the task pane in headless Chrome and clicks Extract
 ├── public/
 │   ├── index.html           # landing page at the deployment root
 │   ├── site.css             # styles for the landing page
 │   ├── site.js              # calls /api/extract-event from the landing page
 │   └── outlook-addin/       # Outlook Add-in (static files served by Vercel)
-│       ├── index.html
-│       ├── app.js
-│       ├── app.css
-│       ├── theme.js
+│       ├── index.html       # task pane
+│       ├── app.js           # Office.js wiring, extraction, Graph event creation
+│       ├── app.css          # Fluent-aligned palette + pane styling
+│       ├── theme.js         # follows the host's light/dark theme
+│       ├── msal.js          # PKCE sign-in via the Office dialog
+│       ├── auth-start.html  # same-origin shim the dialog opens
+│       ├── auth-callback.html # Entra redirect target; returns the code via messageParent
 │       └── assets/          # 16/32/64/80/128 px icons referenced by the manifest
 ├── assets/
-│   └── app-icon.png         # master source for the manifest icons (697x697). Regenerate sizes with `sips -z`.
+│   └── icon.svg             # icon source of truth — regenerate PNGs with `npm run icons`
+├── docs/
+│   └── AUTH.md              # auth architecture, and why the popup design was replaced
 ├── run-tests.sh             # live regression battery (8 multi-day scenarios)
 ├── vitest.config.ts
 ├── package.json
@@ -325,6 +336,23 @@ the error-wrapping behaviour (Fix 6) — `ConfigError` messages pass through;
 any other error is logged server-side and replaced with a generic
 `"Extraction failed"` response so upstream details never leak to the caller.
 
+## Add-in smoke test
+
+```bash
+npm run smoke
+```
+
+Loads the task pane in headless Chrome with a stubbed Office host, clicks
+**Extract events from this email**, and fails on any console error, unhandled
+rejection, or missing event card. `node --check` only proves the files parse;
+this proves the module initialises and that every identifier it references
+exists — it was added after a refactor deleted the pane's shared `state`
+object and shipped a dead Extract button.
+
+It looks for Chrome at the standard macOS path and skips cleanly if it is
+absent; set `CHROME_PATH` to point elsewhere. `npm run deploy` runs it after
+the unit tests.
+
 ## Live regression battery
 
 `run-tests.sh` exercises 8 multi-day scenarios against the deployed API. Use
@@ -410,9 +438,16 @@ uses, so the two looked like different add-ins.
 | `scripts/build-manifest.mjs` | Pre-build step that substitutes `$AZURE_CLIENT_ID` into the template and writes `public/outlook-addin/manifest.xml`. |
 | `public/outlook-addin/manifest.xml` | Generated at build time, served as a static asset at `/outlook-addin/manifest.xml`. Gitignored. |
 | `public/outlook-addin/index.html` | Task-pane UI. |
-| `public/outlook-addin/app.js` | Office.js + fetch logic. |
-| `public/outlook-addin/app.css` | Card styling. |
-| `public/outlook-addin/assets/` | PNG icons (16/32/64/80/128). Replace with your real logo. |
+| `public/outlook-addin/app.js` | Office.js wiring, extraction call, Graph event creation. |
+| `public/outlook-addin/app.css` | Pane styling and the Fluent-aligned colour tokens. |
+| `public/outlook-addin/theme.js` | Follows the host's light/dark theme; manual override. |
+| `public/outlook-addin/msal.js` | PKCE sign-in driven through the Office dialog. |
+| `public/outlook-addin/auth-start.html` | Same-origin shim the dialog opens, which redirects to Entra. |
+| `public/outlook-addin/auth-callback.html` | Entra's redirect target; hands the code back via `messageParent`. |
+| `api/auth-config.ts` | Serves `client_id`, authority, token URL, redirect URI and scopes to the pane. |
+| `assets/icon.svg` | Icon source of truth. |
+| `scripts/build-icons.sh` | Rasterises it to 16/32/64/80/128 px (`npm run icons`). |
+| `public/outlook-addin/assets/` | The generated PNG icons. Do not edit by hand. |
 
 ### How the manifest reaches users
 
@@ -437,8 +472,8 @@ explicitly), so plaintext storage here is safe.
 - **No auth on the API.** The add-in calls `/api/extract-event` directly;
   anyone with the URL can use the backend. Fine for single-user use; add a
   shared-secret header before exposing to others.
-- **No copy-to-clipboard.** Per your direction, events are rendered but not
-  copyable in this iteration.
+- **The pinned pane needs Mailbox 1.5.** Hosts below that still get the
+  add-in, just without the pin (the base manifest stays at 1.3).
 
 ## Creating calendar events
 
@@ -533,9 +568,9 @@ useless without the verifier.
 
    > Keep this on the **Single-page application** platform. That platform
    > makes Entra require an `Origin` header when the code is redeemed,
-   > which is why the pane redeems it itself rather than posting to
-   > `/api/exchange-token`. Moving the exchange back to the server without
-   > first switching this to *Mobile and desktop applications* fails with
+   > which is why the pane redeems the code itself rather than going through
+   > this deployment. Moving the exchange to the server without first
+   > switching this to *Mobile and desktop applications* fails with
    > `AADSTS9002327`.
 4. **API permissions** → *Microsoft Graph* → *Delegated permissions* →
    **Add permissions**:

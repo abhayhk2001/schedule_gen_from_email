@@ -138,12 +138,6 @@ function storeTokens(accessToken, refreshToken, expiresInSec) {
   }
 }
 
-function clearTokens() {
-  safeLocalSet(STORAGE_ACCESS_KEY, null);
-  safeLocalSet(STORAGE_REFRESH_KEY, null);
-  safeLocalSet(STORAGE_EXPIRES_KEY, null);
-}
-
 function readCachedAccessToken() {
   const access = safeLocalGet(STORAGE_ACCESS_KEY);
   const expiresAt = Number(safeLocalGet(STORAGE_EXPIRES_KEY));
@@ -380,6 +374,3 @@ export function invalidateAccessToken() {
   safeLocalSet(STORAGE_EXPIRES_KEY, null);
 }
 
-export function resetMsalCache() {
-  clearTokens();
-}

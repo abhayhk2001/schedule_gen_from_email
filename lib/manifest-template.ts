@@ -177,4 +177,3 @@ export const MANIFEST_TEMPLATE = `<?xml version="1.0" encoding="UTF-8" standalon
 </OfficeApp>
 `;
 
-export const MANIFEST_PLACEHOLDER = "__AZURE_CLIENT_ID__";
