@@ -64,8 +64,12 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/cs
 const server = createServer(async (req, res) => {
   if (req.url.startsWith("/api/extract-event")) {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ events: [{ event_name: "Bargaining Session #10", date: "2026-09-24",
-      time: "09:00", end_time: "13:00", timezone: "America/Chicago", description: "Extracted." }] }));
+    res.end(JSON.stringify({ events: [
+      { event_name: "Upcoming Session", date: "2099-09-24", time: "09:00",
+        end_time: "13:00", timezone: "America/Chicago", location: "Room 100", description: "Upcoming." },
+      { event_name: "Past Session", date: "2000-01-01", time: "09:00",
+        end_time: "13:00", timezone: "America/Chicago", location: "Room 200", description: "Past." },
+    ] }));
     return;
   }
   try {
@@ -86,10 +90,15 @@ const driver = `
     await new Promise(r => setTimeout(r, 300));
     document.getElementById("extract-btn").click();
     await new Promise(r => setTimeout(r, 900));
-    const ev = document.querySelectorAll("#events .event").length;
-    document.title = JSON.stringify({ errors: window.__errors, eventCards: ev,
-      status: document.getElementById("status").textContent,
-      createHidden: document.getElementById("create-btn").classList.contains("hidden") });
+    const upcoming = document.querySelectorAll("#events-upcoming .event").length;
+    const past = document.querySelectorAll("#events-past .event").length;
+    document.title = JSON.stringify({ errors: window.__errors,
+      upcomingCards: upcoming, pastCards: past,
+      upcomingSectionHidden: document.getElementById("upcoming-section").classList.contains("hidden"),
+      pastSectionHidden: document.getElementById("past-section").classList.contains("hidden"),
+      upcomingCreateHidden: document.getElementById("create-upcoming-btn").classList.contains("hidden"),
+      pastCreateHidden: document.getElementById("create-past-btn").classList.contains("hidden"),
+      status: document.getElementById("status").textContent });
   })();
 `;
 writeFileSync(join(root, "outlook-addin", "drive.js"), driver);
@@ -111,6 +120,13 @@ const result = JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
 rmSync(root, { recursive: true, force: true });
 
 console.log(JSON.stringify(result, null, 2));
-const bad = result.errors.length > 0 || result.eventCards !== 1 || result.createHidden;
-console.log(bad ? "\nFAIL" : "\nPASS: extract click rendered 1 event card, no console errors");
+const bad =
+  result.errors.length > 0 ||
+  result.upcomingCards !== 1 ||
+  result.pastCards !== 1 ||
+  result.upcomingSectionHidden ||
+  result.pastSectionHidden ||
+  result.upcomingCreateHidden ||
+  result.pastCreateHidden;
+console.log(bad ? "\nFAIL" : "\nPASS: extract click rendered 1 upcoming + 1 past card, both create buttons visible, no console errors");
 process.exit(bad ? 1 : 0);

@@ -31,17 +31,28 @@
         <button id="extract-btn" class="primary" type="button">
           Extract events from this email
         </button>
-
-        <button id="create-btn" class="primary create hidden" type="button">
-          Create in calendar
-        </button>
       </div>
 
       <section id="status" class="status hidden" aria-live="polite"></section>
 
       <section id="results" class="results hidden">
-        <h2 id="results-heading">Events</h2>
-        <div id="events"></div>
+        <div id="empty" class="empty hidden"></div>
+
+        <section class="event-section hidden" id="upcoming-section">
+          <h2>Upcoming events</h2>
+          <div class="events-list" id="events-upcoming"></div>
+          <button id="create-upcoming-btn" class="primary create hidden" type="button">
+            Create in calendar
+          </button>
+        </section>
+
+        <section class="event-section past hidden" id="past-section">
+          <h2>Past events</h2>
+          <div class="events-list" id="events-past"></div>
+          <button id="create-past-btn" class="primary create hidden" type="button">
+            Create in calendar
+          </button>
+        </section>
       </section>
     </main>
 

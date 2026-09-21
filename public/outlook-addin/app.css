@@ -235,12 +235,29 @@ button.primary.create:disabled {
 
 /* ---------- results ---------- */
 
-.results h2 {
+.results h2,
+.event-section h2 {
   margin: 0 0 8px;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
+}
+
+.event-section {
+  margin-bottom: 20px;
+}
+
+.event-section:last-child {
+  margin-bottom: 0;
+}
+
+.event-section .create {
+  margin-top: 4px;
+}
+
+.event-section.past h2 {
+  color: var(--removed-fg);
 }
 
 .event {

@@ -3,12 +3,24 @@ import { initTheme, setThemeOverride, effectiveMode } from "./theme.js";
 const $ = (id) => document.getElementById(id);
 
 const btn = $("extract-btn");
-const createBtn = $("create-btn");
 const status = $("status");
 const results = $("results");
-const eventsEl = $("events");
+const emptyEl = $("empty");
 const themeBtn = $("theme-toggle");
 const themeIcon = $("theme-icon");
+
+const sections = {
+  upcoming: {
+    root: $("upcoming-section"),
+    list: $("events-upcoming"),
+    create: $("create-upcoming-btn"),
+  },
+  past: {
+    root: $("past-section"),
+    list: $("events-past"),
+    create: $("create-past-btn"),
+  },
+};
 
 const FAST_LANE_BROKEN_KEY = "addCalEvent.fastLaneBroken";
 const FAST_LANE_TIMEOUT_MS = 4_000;
@@ -55,7 +67,7 @@ if (themeBtn) {
 const state = {
   events: [],
   removed: new Set(),
-  results: null,
+  results: { upcoming: null, past: null },
 };
 
 function setStatus(kind, text) {
@@ -100,6 +112,43 @@ function getLocalTimeZone() {
   } catch {
     return "UTC";
   }
+}
+
+function localTodayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function localNowHHMM() {
+  const d = new Date();
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Classifies an extracted event as past or upcoming entirely after parsing. The
+// LLM is not aware of this distinction — it just returns every event it finds.
+// "Past" means the event's end has already elapsed in the user's local time.
+function classifyEvent(ev) {
+  if (!ev.date) return "upcoming";
+  const endDate = ev.end_date || ev.date;
+  const today = localTodayISO();
+  if (endDate < today) return "past";
+  if (endDate > today) return "upcoming";
+  // Same day: an all-day event is still ongoing, a timed one ends at end_time
+  // (or start + 1h when no end is given).
+  if (ev.whole_day) return "upcoming";
+  const endTime = ev.end_time || (ev.time ? addHoursToHHMM(ev.time, 1) : null);
+  if (!endTime) return "upcoming";
+  return endTime <= localNowHHMM() ? "past" : "upcoming";
+}
+
+function partitionEvents() {
+  const upcoming = [];
+  const past = [];
+  state.events.forEach((ev, idx) => {
+    const bucket = classifyEvent(ev) === "past" ? past : upcoming;
+    bucket.push({ ev, idx });
+  });
+  return { upcoming, past };
 }
 
 function mapToGraphFields(ev) {
@@ -290,104 +339,84 @@ async function createEvents(events) {
   return results;
 }
 
-function renderEvents() {
-  results.classList.remove("hidden");
-  eventsEl.innerHTML = "";
+function buildEventCard(ev, idx, removed) {
+  const card = document.createElement("article");
+  card.className = `event ${removed ? "removed" : ""}`;
 
-  if (!state.events.length) {
-    const empty = document.createElement("div");
-    empty.className = "empty";
-    empty.textContent = "No events detected in this email.";
-    eventsEl.appendChild(empty);
-    createBtn.classList.add("hidden");
-    return;
-  }
+  const row = document.createElement("div");
+  row.className = "event-row";
 
-  state.events.forEach((ev, idx) => {
-    const removed = state.removed.has(idx);
-    const card = document.createElement("article");
-    card.className = `event ${removed ? "removed" : ""}`;
-
-    const row = document.createElement("div");
-    row.className = "event-row";
-
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.checked = !removed;
-    checkbox.disabled = removed;
-    checkbox.addEventListener("change", () => {
-      if (checkbox.checked) state.removed.delete(idx);
-      else state.removed.add(idx);
-      renderEvents();
-    });
-    row.appendChild(checkbox);
-
-    const body = document.createElement("div");
-    body.className = "event-body";
-
-    const h3 = document.createElement("h3");
-    h3.textContent = ev.event_name ?? "Untitled event";
-    body.appendChild(h3);
-
-    if (ev.location) {
-      const location = document.createElement("p");
-      location.className = "location";
-      location.textContent = ev.location;
-      body.appendChild(location);
-    }
-
-    const when = document.createElement("p");
-    when.className = "when";
-    const date = ev.date ?? "Unknown date";
-    const time = formatTime(ev);
-    when.textContent = `${date} · ${time}`;
-    if (ev.timezone) {
-      const tzEl = document.createElement("span");
-      tzEl.className = "tz";
-      tzEl.textContent = ev.timezone;
-      when.appendChild(tzEl);
-    }
-    body.appendChild(when);
-
-    row.appendChild(body);
-
-    const removeBtn = document.createElement("button");
-    removeBtn.type = "button";
-    removeBtn.className = "remove-btn";
-    removeBtn.title = removed ? "Restore" : "Remove";
-    removeBtn.textContent = removed ? "+" : "×";
-    removeBtn.addEventListener("click", () => {
-      if (state.removed.has(idx)) state.removed.delete(idx);
-      else state.removed.add(idx);
-      renderEvents();
-      renderCreateButton();
-    });
-    row.appendChild(removeBtn);
-
-    card.appendChild(row);
-    eventsEl.appendChild(card);
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = !removed;
+  checkbox.disabled = removed;
+  checkbox.addEventListener("change", () => {
+    if (checkbox.checked) state.removed.delete(idx);
+    else state.removed.add(idx);
+    renderEvents();
   });
+  row.appendChild(checkbox);
 
-  renderCreateButton();
-}
+  const body = document.createElement("div");
+  body.className = "event-body";
 
-function renderCreateButton() {
-  const remaining = state.events.length - state.removed.size;
-  if (remaining > 0) {
-    createBtn.classList.remove("hidden");
-    createBtn.textContent = `Create ${remaining} event${remaining === 1 ? "" : "s"} in calendar`;
-    createBtn.disabled = false;
-  } else {
-    createBtn.classList.add("hidden");
+  const h3 = document.createElement("h3");
+  h3.textContent = ev.event_name ?? "Untitled event";
+  body.appendChild(h3);
+
+  if (ev.location) {
+    const location = document.createElement("p");
+    location.className = "location";
+    location.textContent = ev.location;
+    body.appendChild(location);
   }
+
+  const when = document.createElement("p");
+  when.className = "when";
+  const date = ev.date ?? "Unknown date";
+  const time = formatTime(ev);
+  when.textContent = `${date} · ${time}`;
+  if (ev.timezone) {
+    const tzEl = document.createElement("span");
+    tzEl.className = "tz";
+    tzEl.textContent = ev.timezone;
+    when.appendChild(tzEl);
+  }
+  body.appendChild(when);
+
+  row.appendChild(body);
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "remove-btn";
+  removeBtn.title = removed ? "Restore" : "Remove";
+  removeBtn.textContent = removed ? "+" : "×";
+  removeBtn.addEventListener("click", () => {
+    if (state.removed.has(idx)) state.removed.delete(idx);
+    else state.removed.add(idx);
+    renderEvents();
+  });
+  row.appendChild(removeBtn);
+
+  card.appendChild(row);
+  return card;
 }
 
-function renderResults() {
-  if (!state.results) return;
-  results.classList.remove("hidden");
-  eventsEl.innerHTML = "";
+function renderEventList(kind) {
+  const { list } = sections[kind];
+  list.innerHTML = "";
+  partitionEvents()[kind].forEach(({ ev, idx }) => {
+    list.appendChild(buildEventCard(ev, idx, state.removed.has(idx)));
+  });
+}
 
-  state.results.forEach((r, idx) => {
+function renderResultList(kind) {
+  const { list } = sections[kind];
+  list.innerHTML = "";
+  const resultsForSection = state.results[kind];
+  if (!resultsForSection) return;
+
+  resultsForSection.forEach((r, idx) => {
     const card = document.createElement("article");
     card.className = `event result ${r.status}`;
 
@@ -438,31 +467,79 @@ function renderResults() {
       retry.type = "button";
       retry.className = "retry-btn";
       retry.textContent = "Retry";
-      retry.addEventListener("click", () => retryOne(idx));
+      retry.addEventListener("click", () => retryOne(kind, idx));
       body.appendChild(retry);
     }
 
     card.appendChild(body);
-    eventsEl.appendChild(card);
+    list.appendChild(card);
   });
 }
 
-async function retryOne(idx) {
-  const r = state.results[idx];
+function renderCreateButton(kind) {
+  const section = sections[kind];
+  const items = partitionEvents()[kind];
+  const remaining = items.filter(({ idx }) => !state.removed.has(idx)).length;
+  if (remaining > 0) {
+    section.create.classList.remove("hidden");
+    section.create.textContent = `Create ${remaining} event${remaining === 1 ? "" : "s"} in calendar`;
+    section.create.disabled = false;
+  } else {
+    section.create.classList.add("hidden");
+  }
+}
+
+function renderSection(kind) {
+  const section = sections[kind];
+  const resultsForSection = state.results[kind];
+  const hasItems = resultsForSection
+    ? resultsForSection.length > 0
+    : partitionEvents()[kind].length > 0;
+
+  section.root.classList.toggle("hidden", !hasItems);
+  if (!hasItems) return;
+
+  if (resultsForSection) {
+    renderResultList(kind);
+    section.create.classList.add("hidden");
+  } else {
+    renderEventList(kind);
+    renderCreateButton(kind);
+  }
+}
+
+function renderEvents() {
+  results.classList.remove("hidden");
+  emptyEl.classList.add("hidden");
+
+  if (!state.events.length) {
+    emptyEl.textContent = "No events detected in this email.";
+    emptyEl.classList.remove("hidden");
+    sections.upcoming.root.classList.add("hidden");
+    sections.past.root.classList.add("hidden");
+    return;
+  }
+
+  renderSection("upcoming");
+  renderSection("past");
+}
+
+async function retryOne(kind, idx) {
+  const r = state.results[kind]?.[idx];
   if (!r || r.status !== "error") return;
-  state.results[idx] = { ev: r.ev, status: "pending" };
-  renderResults();
+  state.results[kind][idx] = { ev: r.ev, status: "pending" };
+  renderSection(kind);
   try {
     const { itemId, webLink } = await createGraphEvent(r.ev);
-    state.results[idx] = { ev: r.ev, status: "success", itemId, webLink };
+    state.results[kind][idx] = { ev: r.ev, status: "success", itemId, webLink };
   } catch (err) {
-    state.results[idx] = {
+    state.results[kind][idx] = {
       ev: r.ev,
       status: "error",
       error: err?.message ?? String(err),
     };
   }
-  renderResults();
+  renderSection(kind);
 }
 
 // Clears everything the pane is showing about the current message. The pinned
@@ -471,10 +548,16 @@ async function retryOne(idx) {
 function resetPane() {
   state.events = [];
   state.removed.clear();
-  state.results = null;
-  createBtn.classList.add("hidden");
+  state.results = { upcoming: null, past: null };
   results.classList.add("hidden");
-  eventsEl.innerHTML = "";
+  emptyEl.classList.add("hidden");
+  emptyEl.textContent = "";
+  for (const kind of ["upcoming", "past"]) {
+    const section = sections[kind];
+    section.root.classList.add("hidden");
+    section.list.innerHTML = "";
+    section.create.classList.add("hidden");
+  }
   clearStatus();
 }
 
@@ -569,22 +652,29 @@ Office.onReady((info) => {
     }
   });
 
-  createBtn.addEventListener("click", async () => {
-    const remaining = state.events.filter((_, i) => !state.removed.has(i));
+  async function onCreateClick(kind) {
+    const section = sections[kind];
+    const items = partitionEvents()[kind];
+    const remaining = items
+      .filter(({ idx }) => !state.removed.has(idx))
+      .map(({ ev }) => ev);
     if (!remaining.length) return;
-    createBtn.disabled = true;
+    section.create.disabled = true;
     btn.disabled = true;
     setStatus("loading", `Creating ${remaining.length} event(s)…`);
     try {
-      state.results = await createEvents(remaining);
+      state.results[kind] = await createEvents(remaining);
       clearStatus();
-      renderResults();
+      renderSection(kind);
     } catch (err) {
       setStatus("error", err?.message ?? "Unknown error");
     } finally {
-      createBtn.disabled = false;
+      section.create.disabled = false;
       btn.disabled = false;
     }
-  });
+  }
+
+  sections.upcoming.create.addEventListener("click", () => onCreateClick("upcoming"));
+  sections.past.create.addEventListener("click", () => onCreateClick("past"));
 
 });
