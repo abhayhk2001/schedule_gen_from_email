@@ -155,11 +155,15 @@ function mapToGraphFields(ev) {
   const subject = ev.event_name || "Untitled event";
   const body = ev.description || "";
   const timeZone = ev.timezone || getLocalTimeZone();
+  // Graph wants a location resource, not a bare string. Omit the key entirely
+  // when the extractor found nothing, so we never send an empty location.
+  const location = ev.location ? { displayName: ev.location } : null;
 
   if (ev.whole_day) {
     return {
       subject,
       body: { contentType: "Text", content: body },
+      ...(location ? { location } : {}),
       start: { dateTime: ev.date, timeZone },
       end: {
         dateTime: ev.end_date || addDaysToISO(ev.date, 1),
@@ -175,6 +179,7 @@ function mapToGraphFields(ev) {
   return {
     subject,
     body: { contentType: "Text", content: body },
+    ...(location ? { location } : {}),
     start: { dateTime: `${ev.date}T${startTime}:00`, timeZone },
     end: {
       dateTime: `${ev.end_date || ev.date}T${endTime}:00`,

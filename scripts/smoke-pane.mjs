@@ -30,8 +30,19 @@ window.addEventListener("unhandledrejection", (e) =>
   window.__errors.push("unhandledrejection: " + (e.reason && e.reason.message || e.reason)));
 const origError = console.error;
 console.error = (...a) => { window.__errors.push("console.error: " + a.join(" ")); origError(...a); };
+window.__graphPosts = [];
+const origFetch = window.fetch.bind(window);
+window.fetch = async (url, init) => {
+  const href = typeof url === "string" ? url : url.url;
+  if (href.startsWith("https://graph.microsoft.com/")) {
+    window.__graphPosts.push(JSON.parse(init.body));
+    return { ok: true, status: 201, json: async () => ({ id: "smoke-1", webLink: "#" }) };
+  }
+  return origFetch(url, init);
+};
 window.Office = {
   HostType: { Outlook: "Outlook" },
+  auth: { getAccessToken: (opts, cb) => cb({ status: "succeeded", value: "smoke-token" }) },
   CoercionType: { Text: "text" },
   AsyncResultStatus: { Succeeded: "succeeded" },
   EventType: { ItemChanged: "olkItemSelectedChanged", ThemeChanged: "officeThemeChanged" },
@@ -92,13 +103,21 @@ const driver = `
     await new Promise(r => setTimeout(r, 900));
     const upcoming = document.querySelectorAll("#events-upcoming .event").length;
     const past = document.querySelectorAll("#events-past .event").length;
-    document.title = JSON.stringify({ errors: window.__errors,
+    // Snapshot the post-extract state before creating: a successful create
+    // swaps the card list for results and hides the create button.
+    const snapshot = {
       upcomingCards: upcoming, pastCards: past,
       upcomingSectionHidden: document.getElementById("upcoming-section").classList.contains("hidden"),
       pastSectionHidden: document.getElementById("past-section").classList.contains("hidden"),
       upcomingCreateHidden: document.getElementById("create-upcoming-btn").classList.contains("hidden"),
       pastCreateHidden: document.getElementById("create-past-btn").classList.contains("hidden"),
-      status: document.getElementById("status").textContent });
+      status: document.getElementById("status").textContent,
+    };
+    document.getElementById("create-upcoming-btn").click();
+    await new Promise(r => setTimeout(r, 900));
+    document.title = JSON.stringify({ errors: window.__errors, ...snapshot,
+      graphPosts: window.__graphPosts.length,
+      graphLocations: window.__graphPosts.map(p => p.location ? p.location.displayName : null) });
   })();
 `;
 writeFileSync(join(root, "outlook-addin", "drive.js"), driver);
@@ -124,9 +143,11 @@ const bad =
   result.errors.length > 0 ||
   result.upcomingCards !== 1 ||
   result.pastCards !== 1 ||
+  result.graphPosts !== 1 ||
+  result.graphLocations[0] !== "Room 100" ||
   result.upcomingSectionHidden ||
   result.pastSectionHidden ||
   result.upcomingCreateHidden ||
   result.pastCreateHidden;
-console.log(bad ? "\nFAIL" : "\nPASS: extract click rendered 1 upcoming + 1 past card, both create buttons visible, no console errors");
+console.log(bad ? "\nFAIL" : "\nPASS: extract rendered 1 upcoming + 1 past card, create posted 1 Graph event carrying its location, no console errors");
 process.exit(bad ? 1 : 0);

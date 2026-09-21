@@ -70,6 +70,13 @@ function renderEvents(events) {
     title.textContent = ev.event_name ?? "Untitled event";
     card.appendChild(title);
 
+    if (ev.location) {
+      const location = document.createElement("p");
+      location.className = "location";
+      location.textContent = ev.location;
+      card.appendChild(location);
+    }
+
     const meta = document.createElement("p");
     meta.className = "when";
     meta.textContent = `${formatDate(ev)} · ${formatTime(ev)}`;
