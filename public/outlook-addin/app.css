@@ -392,6 +392,13 @@ button.primary.create:disabled {
   color: var(--error-fg);
 }
 
+/* A duplicate is informational, not a failure. There is no warning token pair
+   in either theme, so reuse the accent pairing .status.loading already uses. */
+.event.result.duplicate .result-marker {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
 .event.result .event-body a {
   display: inline-block;
   margin-top: 4px;

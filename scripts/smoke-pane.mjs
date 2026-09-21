@@ -31,10 +31,33 @@ window.addEventListener("unhandledrejection", (e) =>
 const origError = console.error;
 console.error = (...a) => { window.__errors.push("console.error: " + a.join(" ")); origError(...a); };
 window.__graphPosts = [];
+window.__graphViews = 0;
+// Stands in for the user's calendar: one event that exactly matches the
+// "Upcoming Session" fixture (with a punctuation difference, so the subject
+// normaliser is exercised) and nothing matching the "Past Session" one.
+const CANNED_CALENDAR = [{
+  id: "existing-1",
+  subject: "Upcoming Session!",
+  start: { dateTime: "2099-09-24T09:00:00.0000000", timeZone: "America/Chicago" },
+  end: { dateTime: "2099-09-24T13:00:00.0000000", timeZone: "America/Chicago" },
+  isAllDay: false,
+  webLink: "https://outlook.example/existing-1",
+}];
 const origFetch = window.fetch.bind(window);
 window.fetch = async (url, init) => {
   const href = typeof url === "string" ? url : url.url;
   if (href.startsWith("https://graph.microsoft.com/")) {
+    if (href.includes("/calendarView")) {
+      window.__graphViews += 1;
+      return {
+        ok: true,
+        status: 200,
+        // The pane refuses to trust a window Graph did not return in the
+        // requested timezone, so the stub must echo the applied preference.
+        headers: { get: (h) => (h === "Preference-Applied" ? 'outlook.timezone="America/Chicago"' : null) },
+        json: async () => ({ value: CANNED_CALENDAR }),
+      };
+    }
     window.__graphPosts.push(JSON.parse(init.body));
     return { ok: true, status: 201, json: async () => ({ id: "smoke-1", webLink: "#" }) };
   }
@@ -113,9 +136,33 @@ const driver = `
       pastCreateHidden: document.getElementById("create-past-btn").classList.contains("hidden"),
       status: document.getElementById("status").textContent,
     };
+    // 1. The upcoming fixture is already on the canned calendar: expect no POST
+    //    and a duplicate row offering the override.
     document.getElementById("create-upcoming-btn").click();
     await new Promise(r => setTimeout(r, 900));
+    const afterDuplicate = {
+      postsAfterDuplicate: window.__graphPosts.length,
+      duplicateRows: document.querySelectorAll("#events-upcoming .event.result.duplicate").length,
+      duplicateLink: !!document.querySelector("#events-upcoming .event.result.duplicate a"),
+    };
+
+    // 2. The past fixture matches nothing: the check must not block it.
+    document.getElementById("create-past-btn").click();
+    await new Promise(r => setTimeout(r, 900));
+    const afterPast = {
+      postsAfterPast: window.__graphPosts.length,
+      pastSubject: window.__graphPosts.length ? window.__graphPosts[0].subject : null,
+    };
+
+    // 3. "Create anyway" overrides the duplicate and posts it after all.
+    const anyway = document.querySelector("#events-upcoming .event.result.duplicate .retry-btn");
+    if (anyway) anyway.click();
+    await new Promise(r => setTimeout(r, 900));
+
     document.title = JSON.stringify({ errors: window.__errors, ...snapshot,
+      ...afterDuplicate, ...afterPast,
+      graphViews: window.__graphViews,
+      postsAfterOverride: window.__graphPosts.length,
       graphPosts: window.__graphPosts.length,
       graphLocations: window.__graphPosts.map(p => p.location ? p.location.displayName : null) });
   })();
@@ -143,11 +190,19 @@ const bad =
   result.errors.length > 0 ||
   result.upcomingCards !== 1 ||
   result.pastCards !== 1 ||
-  result.graphPosts !== 1 ||
-  result.graphLocations[0] !== "Room 100" ||
+  result.postsAfterDuplicate !== 0 ||
+  result.duplicateRows !== 1 ||
+  !result.duplicateLink ||
+  result.postsAfterPast !== 1 ||
+  result.pastSubject !== "Past Session" ||
+  result.postsAfterOverride !== 2 ||
+  result.graphViews < 2 ||
+  result.graphLocations.length !== 2 ||
+  result.graphLocations[0] !== "Room 200" ||
+  result.graphLocations[1] !== "Room 100" ||
   result.upcomingSectionHidden ||
   result.pastSectionHidden ||
   result.upcomingCreateHidden ||
   result.pastCreateHidden;
-console.log(bad ? "\nFAIL" : "\nPASS: extract rendered 1 upcoming + 1 past card, create posted 1 Graph event carrying its location, no console errors");
+console.log(bad ? "\nFAIL" : "\nPASS: duplicate skipped (no POST, override offered), non-matching event still created, \"Create anyway\" posted it, locations carried through, no console errors");
 process.exit(bad ? 1 : 0);

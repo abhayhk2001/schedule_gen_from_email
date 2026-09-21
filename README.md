@@ -51,6 +51,7 @@ endpoint.
 │       ├── index.html       # task pane
 │       ├── app.js           # Office.js wiring, extraction, Graph event creation
 │       ├── app.css          # Fluent-aligned palette + pane styling
+│       ├── dedupe.js        # pure duplicate-matching rules (unit-tested)
 │       ├── theme.js         # follows the host's light/dark theme
 │       ├── msal.js          # PKCE sign-in via the Office dialog
 │       ├── auth-start.html  # same-origin shim the dialog opens
@@ -440,6 +441,7 @@ uses, so the two looked like different add-ins.
 | `public/outlook-addin/index.html` | Task-pane UI. |
 | `public/outlook-addin/app.js` | Office.js wiring, extraction call, Graph event creation. |
 | `public/outlook-addin/app.css` | Pane styling and the Fluent-aligned colour tokens. |
+| `public/outlook-addin/dedupe.js` | Pure duplicate-matching rules (no DOM, no Office globals), unit-tested by `tests/dedupe.test.ts`. |
 | `public/outlook-addin/theme.js` | Follows the host's light/dark theme; manual override. |
 | `public/outlook-addin/msal.js` | PKCE sign-in driven through the Office dialog. |
 | `public/outlook-addin/auth-start.html` | Same-origin shim the dialog opens, which redirects to Entra. |
@@ -511,6 +513,47 @@ Content-Type: application/json
 | All day          | true        | `start.dateTime: "{date}"`, `end.dateTime: "{end_date ?? date+1d}"`, `isAllDay: true`           |
 | Timed            | false       | `start.dateTime: "{date}T{time}:00"`, `end.dateTime: "{end_date ?? date}T{end_time ?? time+1h}:00"`, `isAllDay: false` |
 | Both (always)    | —           | `subject: "{event_name}"`, `body.contentType: "Text"`, `body.content: "{description}"`            |
+
+### Duplicate detection
+
+Before each POST the add-in checks whether the event is already on the
+calendar, so re-extracting the same email — a forward, a reminder re-send,
+or just clicking **Create** twice — does not create a second copy.
+
+```
+GET https://graph.microsoft.com/v1.0/me/calendarView
+      ?startDateTime={start}&endDateTime={end}
+      &$select=id,subject,start,end,isAllDay,webLink&$top=50
+Prefer: outlook.timezone="{tz}"
+```
+
+`calendarView` rather than `/me/events` because it expands recurring series,
+so a weekly standup is correctly seen as occupying the slot. The
+`Prefer: outlook.timezone` header makes Graph interpret the window *and*
+return every start/end in that same IANA zone, so both sides of the
+comparison are already in one frame — no UTC conversion and no DST maths.
+
+An existing event counts as a duplicate only when **all** of these hold:
+
+| | Rule |
+|---|---|
+| Slot | `isAllDay`, start **and** end all match to the minute |
+| Title | Matches after normalising case, punctuation and whitespace — or one title contains the other, or ≥ 80 % of their tokens overlap |
+
+An event at a different time is never a duplicate, whatever it is called, so a
+genuine double-booking is never mistaken for one. The rules live in
+`public/outlook-addin/dedupe.js` as pure functions and are unit-tested in
+`tests/dedupe.test.ts`.
+
+**The check fails open.** If the token cannot be acquired, the GET fails, the
+response omits the `Preference-Applied` header (meaning Graph ignored the
+timezone and answered in UTC, which would make every comparison wrong), or the
+event has no date, the add-in logs a warning and creates the event anyway. A
+check that cannot run must never block a create: a missed duplicate is merely
+the old behaviour, while a false positive would silently drop an event the user
+asked for.
+
+No extra consent is needed — `Calendars.ReadWrite` already covers the read.
 
 ### Fallback rules
 
@@ -663,6 +706,12 @@ Failures are reported per event. A failed row stays in the list with its
 error message and a **Retry** button; successful rows show **"Created —
 open your Outlook calendar to view"**. One failure does not block the
 others.
+
+A row skipped as a duplicate is neither a success nor a failure: it renders
+with an informational marker, names the event it matched, links to it, and
+offers **Create anyway** to post it regardless. **Retry** and **Create anyway**
+both re-read the calendar rather than reusing the cached window, since it may
+have changed in the meantime.
 
 ### Diagnostics
 

@@ -9,6 +9,9 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    // Lets tests/dedupe.test.ts import the pane's dedupe.js and infer its types
+    // directly, with no hand-maintained .d.ts to drift out of sync.
+    "allowJs": true,
     "isolatedModules": true,
     "noEmit": true,
     "types": ["@vercel/node", "vitest/globals"]

@@ -1,4 +1,5 @@
 import { initTheme, setThemeOverride, effectiveMode } from "./theme.js";
+import { findDuplicate } from "./dedupe.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -283,9 +284,96 @@ async function getGraphToken(scopes, opts = {}) {
   });
 }
 
-async function createGraphEvent(ev, { retry = true, skipFastLane = false } = {}) {
+// Keyed by `${timeZone}|${start}|${end}`. Cleared at the top of every Create
+// click so each click reads fresh calendar state; retry and "Create anyway"
+// bypass it entirely, since by then the calendar may have changed underneath us.
+const calendarWindowCache = new Map();
+
+function clearCalendarWindowCache() {
+  calendarWindowCache.clear();
+}
+
+// Returns the calendarView entries overlapping this event's exact window, or
+// null when the calendar could not be read in a form we can compare against.
+// Null means "check unavailable" — never "no duplicates".
+async function fetchCalendarWindow(event, token, { useCache = true } = {}) {
+  const timeZone = event.start?.timeZone ?? getLocalTimeZone();
+  const start = event.start?.dateTime;
+  const end = event.end?.dateTime;
+  if (!start || !end) return null;
+
+  const key = `${timeZone}|${start}|${end}`;
+  if (useCache && calendarWindowCache.has(key)) return calendarWindowCache.get(key);
+
+  const url =
+    `${GRAPH_RESOURCE}/v1.0/me/calendarView` +
+    `?startDateTime=${encodeURIComponent(start)}` +
+    `&endDateTime=${encodeURIComponent(end)}` +
+    `&$select=id,subject,start,end,isAllDay,webLink&$top=50`;
+
+  let resp;
+  try {
+    resp = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        // Makes Graph interpret the window AND return every start/end in this
+        // same zone, so comparison is a plain string compare against the
+        // payload mapToGraphFields built — no UTC conversion, no DST math.
+        Prefer: `outlook.timezone="${timeZone}"`,
+      },
+    });
+  } catch (err) {
+    pushLog("warn", `duplicate check: network error (${err?.message ?? String(err)})`);
+    return null;
+  }
+
+  if (!resp.ok) {
+    pushLog("warn", `duplicate check: calendarView returned ${resp.status}`);
+    return null;
+  }
+
+  // Without this header Graph ignored the timezone and answered in UTC, which
+  // would make every comparison wrong. Treat it as "check unavailable".
+  if (!resp.headers.get("Preference-Applied")) {
+    pushLog("warn", `duplicate check: Graph did not apply timezone ${timeZone}`);
+    return null;
+  }
+
+  let value;
+  try {
+    value = (await resp.json())?.value;
+  } catch {
+    pushLog("warn", "duplicate check: could not parse calendarView response");
+    return null;
+  }
+  if (!Array.isArray(value)) return null;
+
+  if (useCache) calendarWindowCache.set(key, value);
+  return value;
+}
+
+async function createGraphEvent(
+  ev,
+  { retry = true, skipFastLane = false, force = false, useCache = true } = {},
+) {
   const event = mapToGraphFields(ev);
   const token = await getGraphToken(GRAPH_DEFAULT_SCOPES, { skipFastLane });
+
+  // Fail open throughout: a check that cannot run must never block a create.
+  // A missed duplicate is today's behaviour; a false positive would silently
+  // drop an event the user asked for.
+  if (!force && ev.date) {
+    const existing = await fetchCalendarWindow(event, token, { useCache });
+    const match = existing ? findDuplicate(existing, event) : null;
+    if (match) {
+      pushLog("info", `duplicate: "${match.subject}" already occupies this slot`);
+      return {
+        duplicate: true,
+        existingWebLink: match.webLink ?? null,
+        existingSubject: match.subject ?? null,
+      };
+    }
+  }
 
   pushLog("info", `POST ${GRAPH_RESOURCE}/v1.0/me/events`);
   let resp;
@@ -312,7 +400,7 @@ async function createGraphEvent(ev, { retry = true, skipFastLane = false } = {})
     // can renew silently. Skip the fast lane, since an Office SSO token is
     // what produced this 401 whenever that lane is the one in use.
     msalModule.invalidateAccessToken();
-    return createGraphEvent(ev, { retry: false, skipFastLane: true });
+    return createGraphEvent(ev, { retry: false, skipFastLane: true, force, useCache });
   }
 
   if (!resp.ok) {
@@ -335,8 +423,17 @@ async function createEvents(events) {
   const results = [];
   for (const ev of events) {
     try {
-      const { itemId, webLink } = await createGraphEvent(ev);
-      results.push({ ev, status: "success", itemId, webLink });
+      const res = await createGraphEvent(ev);
+      if (res.duplicate) {
+        results.push({
+          ev,
+          status: "duplicate",
+          existingWebLink: res.existingWebLink,
+          existingSubject: res.existingSubject,
+        });
+      } else {
+        results.push({ ev, status: "success", itemId: res.itemId, webLink: res.webLink });
+      }
     } catch (err) {
       results.push({ ev, status: "error", error: err?.message ?? String(err) });
     }
@@ -415,6 +512,8 @@ function renderEventList(kind) {
   });
 }
 
+const RESULT_GLYPHS = { success: "✓", duplicate: "!", error: "✗" };
+
 function renderResultList(kind) {
   const { list } = sections[kind];
   list.innerHTML = "";
@@ -427,7 +526,7 @@ function renderResultList(kind) {
 
     const marker = document.createElement("div");
     marker.className = "result-marker";
-    marker.textContent = r.status === "success" ? "✓" : "✗";
+    marker.textContent = RESULT_GLYPHS[r.status] ?? "✗";
     card.appendChild(marker);
 
     const body = document.createElement("div");
@@ -462,6 +561,29 @@ function renderResultList(kind) {
         link.textContent = "Open in Outlook on the web";
         body.appendChild(link);
       }
+    } else if (r.status === "duplicate") {
+      const note = document.createElement("p");
+      note.className = "desc";
+      note.textContent = r.existingSubject
+        ? `Already on your calendar as “${r.existingSubject}”. Not created again.`
+        : "Already on your calendar. Not created again.";
+      body.appendChild(note);
+
+      if (r.existingWebLink) {
+        const link = document.createElement("a");
+        link.href = r.existingWebLink;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "Open the existing event";
+        body.appendChild(link);
+      }
+
+      const anyway = document.createElement("button");
+      anyway.type = "button";
+      anyway.className = "retry-btn";
+      anyway.textContent = "Create anyway";
+      anyway.addEventListener("click", () => createAnyway(kind, idx));
+      body.appendChild(anyway);
     } else if (r.status === "error") {
       const err = document.createElement("p");
       err.className = "error-text";
@@ -535,8 +657,40 @@ async function retryOne(kind, idx) {
   state.results[kind][idx] = { ev: r.ev, status: "pending" };
   renderSection(kind);
   try {
-    const { itemId, webLink } = await createGraphEvent(r.ev);
-    state.results[kind][idx] = { ev: r.ev, status: "success", itemId, webLink };
+    const res = await createGraphEvent(r.ev, { useCache: false });
+    state.results[kind][idx] = res.duplicate
+      ? {
+          ev: r.ev,
+          status: "duplicate",
+          existingWebLink: res.existingWebLink,
+          existingSubject: res.existingSubject,
+        }
+      : { ev: r.ev, status: "success", itemId: res.itemId, webLink: res.webLink };
+  } catch (err) {
+    state.results[kind][idx] = {
+      ev: r.ev,
+      status: "error",
+      error: err?.message ?? String(err),
+    };
+  }
+  renderSection(kind);
+}
+
+// The override behind "Create anyway" on a duplicate row: skip the check
+// entirely and post the event the user has explicitly asked for a second time.
+async function createAnyway(kind, idx) {
+  const r = state.results[kind]?.[idx];
+  if (!r || r.status !== "duplicate") return;
+  state.results[kind][idx] = { ev: r.ev, status: "pending" };
+  renderSection(kind);
+  try {
+    const res = await createGraphEvent(r.ev, { force: true });
+    state.results[kind][idx] = {
+      ev: r.ev,
+      status: "success",
+      itemId: res.itemId,
+      webLink: res.webLink,
+    };
   } catch (err) {
     state.results[kind][idx] = {
       ev: r.ev,
@@ -667,6 +821,7 @@ Office.onReady((info) => {
     section.create.disabled = true;
     btn.disabled = true;
     setStatus("loading", `Creating ${remaining.length} event(s)…`);
+    clearCalendarWindowCache();
     try {
       state.results[kind] = await createEvents(remaining);
       clearStatus();
