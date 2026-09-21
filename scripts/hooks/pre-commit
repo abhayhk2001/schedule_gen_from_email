@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Pre-commit guardrail: runs `npm run verify` so every commit is checked
+# against the "basic working of the website" suite (typecheck, unit tests,
+# add-in smoke, landing-page health, and the build-script 404 guard).
+# Skip with `git commit --no-verify` if you must.
+set -e
+npm run verify

@@ -13,17 +13,20 @@ const placeholder = "__AZURE_CLIENT_ID__";
 const clientId = (process.env.AZURE_CLIENT_ID ?? "").trim();
 
 if (!clientId) {
-  console.error(
-    "[build-manifest] AZURE_CLIENT_ID is empty. Run `vercel env add AZURE_CLIENT_ID production --type config` (this value is a public client ID, not a secret).",
+  console.warn(
+    "[build-manifest] AZURE_CLIENT_ID is empty. Skipping manifest generation.",
   );
-  process.exit(1);
+  console.warn(
+    "[build-manifest] The landing page and API will still deploy, but the Outlook add-in manifest will be absent and the add-in cannot be installed until you run: vercel env add AZURE_CLIENT_ID production --type config",
+  );
+  process.exit(0);
 }
 
 if (!/^[0-9a-fA-F-]{32,}$/.test(clientId)) {
-  console.error(
-    `[build-manifest] AZURE_CLIENT_ID does not look like a GUID: "${clientId}"`,
+  console.warn(
+    `[build-manifest] AZURE_CLIENT_ID does not look like a GUID: "${clientId}". Skipping manifest generation.`,
   );
-  process.exit(1);
+  process.exit(0);
 }
 
 const source = readFileSync(templatePath, "utf8");

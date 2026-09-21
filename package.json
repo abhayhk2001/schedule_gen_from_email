@@ -6,10 +6,12 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "smoke": "node scripts/smoke-pane.mjs",
+    "verify": "node scripts/verify.mjs",
     "test:watch": "vitest",
     "icons": "./scripts/build-icons.sh",
     "dev": "vercel dev",
-    "deploy": "npm run typecheck && npm test && npm run smoke && vercel --prod"
+    "deploy": "npm run typecheck && npm test && npm run smoke && vercel --prod",
+    "prepare": "git config core.hooksPath scripts/hooks"
   },
   "dependencies": {
     "openai": "^4.77.0"
