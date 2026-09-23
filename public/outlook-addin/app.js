@@ -1,5 +1,6 @@
 import { initTheme, setThemeOverride, effectiveMode } from "./theme.js";
 import { findDuplicate } from "./dedupe.js";
+import { buildEventBody } from "./eventbody.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -38,7 +39,9 @@ function pushLog(level, text) {
 }
 
 const GRAPH_RESOURCE = "https://graph.microsoft.com";
-const GRAPH_DEFAULT_SCOPES = ["openid", "profile", "offline_access", "User.Read", "Calendars.ReadWrite"];
+// Mail.ReadBasic is the least-privileged scope that returns a message's
+// webLink — metadata only, no message bodies or attachments.
+const GRAPH_DEFAULT_SCOPES = ["openid", "profile", "offline_access", "User.Read", "Calendars.ReadWrite", "Mail.ReadBasic"];
 
 const SUN_SVG =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m4.93 19.07 1.41-1.41"/><path d="m17.66 6.34 1.41-1.41"/></svg>';
@@ -69,6 +72,10 @@ const state = {
   events: [],
   removed: new Set(),
   results: { upcoming: null, past: null },
+  // Identifies the email the current events were extracted from, so the
+  // created calendar items can link back to it. null when the host did not
+  // give us an id we can resolve.
+  source: null,
 };
 
 function setStatus(kind, text) {
@@ -152,9 +159,75 @@ function partitionEvents() {
   return { upcoming, past };
 }
 
-function mapToGraphFields(ev) {
+// Converts the Office item id into the REST id Graph accepts. Must run while
+// the item is live — the extract handler's `item` local dies when it returns.
+// Everything here is feature-detected: a host that cannot give us an id just
+// means no link, never a failed extraction.
+function captureSource(item, subject) {
+  try {
+    const convert = Office.context.mailbox?.convertToRestId;
+    const restVersion = Office.MailboxEnums?.RestVersion?.v2_0;
+    if (typeof convert !== "function" || !item?.itemId || !restVersion) {
+      pushLog("info", "source link: host did not expose a convertible item id");
+      return null;
+    }
+    const restId = convert.call(Office.context.mailbox, item.itemId, restVersion);
+    return restId ? { restId, subject, webLink: null } : null;
+  } catch (err) {
+    pushLog("warn", `source link: could not convert item id (${err?.message ?? err})`);
+    return null;
+  }
+}
+
+// Resolves the source email's official webLink, once per email. Graph is the
+// authority here: it returns the correct host for work and personal accounts
+// alike, which a locally built URL could not.
+//
+// Fails open — a missing link is a far smaller loss than a failed create, and
+// right after a scope change this will 403 until the user re-consents.
+async function fetchSourceWebLink(token) {
+  const source = state.source;
+  if (!source || source.webLink) return source?.webLink ?? null;
+
+  const url =
+    `${GRAPH_RESOURCE}/v1.0/me/messages/${encodeURIComponent(source.restId)}` +
+    `?$select=webLink`;
+
+  let resp;
+  try {
+    resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  } catch (err) {
+    pushLog("warn", `source link: network error (${err?.message ?? String(err)})`);
+    return null;
+  }
+
+  if (!resp.ok) {
+    pushLog(
+      "warn",
+      resp.status === 403
+        ? "source link: Graph returned 403 — Mail.ReadBasic has not been consented yet"
+        : `source link: message lookup returned ${resp.status}`,
+    );
+    return null;
+  }
+
+  let webLink;
+  try {
+    webLink = (await resp.json())?.webLink;
+  } catch {
+    pushLog("warn", "source link: could not parse the message response");
+    return null;
+  }
+
+  if (!webLink) return null;
+  source.webLink = webLink;
+  pushLog("success", "source link: resolved the email webLink");
+  return webLink;
+}
+
+function mapToGraphFields(ev, source = null) {
   const subject = ev.event_name || "Untitled event";
-  const body = ev.description || "";
+  const body = buildEventBody(ev.description, source);
   const timeZone = ev.timezone || getLocalTimeZone();
   // Graph wants a location resource, not a bare string. Omit the key entirely
   // when the extractor found nothing, so we never send an empty location.
@@ -163,7 +236,7 @@ function mapToGraphFields(ev) {
   if (ev.whole_day) {
     return {
       subject,
-      body: { contentType: "Text", content: body },
+      body,
       ...(location ? { location } : {}),
       start: { dateTime: ev.date, timeZone },
       end: {
@@ -179,7 +252,7 @@ function mapToGraphFields(ev) {
 
   return {
     subject,
-    body: { contentType: "Text", content: body },
+    body,
     ...(location ? { location } : {}),
     start: { dateTime: `${ev.date}T${startTime}:00`, timeZone },
     end: {
@@ -373,6 +446,14 @@ async function createGraphEvent(
         existingSubject: match.subject ?? null,
       };
     }
+  }
+
+  // Resolved only once we know we are actually posting, so a duplicate never
+  // pays for the lookup. fetchSourceWebLink memoises onto state.source, so a
+  // batch of events from one email costs a single GET.
+  if (state.source) {
+    await fetchSourceWebLink(token);
+    event.body = buildEventBody(ev.description, state.source);
   }
 
   pushLog("info", `POST ${GRAPH_RESOURCE}/v1.0/me/events`);
@@ -708,6 +789,7 @@ function resetPane() {
   state.events = [];
   state.removed.clear();
   state.results = { upcoming: null, past: null };
+  state.source = null;
   results.classList.add("hidden");
   emptyEl.classList.add("hidden");
   emptyEl.textContent = "";
@@ -770,6 +852,7 @@ Office.onReady((info) => {
       const item = Office.context.mailbox.item;
       const subject = item.subject ?? "";
       const sender = item.sender?.emailAddress ?? "";
+      state.source = captureSource(item, subject);
 
       setStatus("loading", "Reading email body…");
 

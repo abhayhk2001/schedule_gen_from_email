@@ -32,6 +32,10 @@ const origError = console.error;
 console.error = (...a) => { window.__errors.push("console.error: " + a.join(" ")); origError(...a); };
 window.__graphPosts = [];
 window.__graphViews = 0;
+window.__graphMessageGets = 0;
+const SOURCE_WEB_LINK = "https://outlook.office365.com/owa/?ItemID=SMOKE%3D&exvsurl=1";
+// The "&" must arrive HTML-escaped inside the href attribute.
+const EXPECTED_HREF = 'href="https://outlook.office365.com/owa/?ItemID=SMOKE%3D&amp;exvsurl=1"';
 // Stands in for the user's calendar: one event that exactly matches the
 // "Upcoming Session" fixture (with a punctuation difference, so the subject
 // normaliser is exercised) and nothing matching the "Past Session" one.
@@ -47,6 +51,15 @@ const origFetch = window.fetch.bind(window);
 window.fetch = async (url, init) => {
   const href = typeof url === "string" ? url : url.url;
   if (href.startsWith("https://graph.microsoft.com/")) {
+    if (href.includes("/me/messages/")) {
+      window.__graphMessageGets += 1;
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        json: async () => ({ webLink: SOURCE_WEB_LINK }),
+      };
+    }
     if (href.includes("/calendarView")) {
       window.__graphViews += 1;
       return {
@@ -65,6 +78,7 @@ window.fetch = async (url, init) => {
 };
 window.Office = {
   HostType: { Outlook: "Outlook" },
+  MailboxEnums: { RestVersion: { v2_0: "v2.0" } },
   auth: { getAccessToken: (opts, cb) => cb({ status: "succeeded", value: "smoke-token" }) },
   CoercionType: { Text: "text" },
   AsyncResultStatus: { Succeeded: "succeeded" },
@@ -77,7 +91,9 @@ window.Office = {
     addHandlerAsync: (t, h, cb) => cb && cb({ status: "succeeded" }),
     mailbox: {
       addHandlerAsync: (t, h, cb) => cb && cb({ status: "succeeded" }),
+      convertToRestId: (id) => "rest-" + id,
       item: {
+        itemId: "EWS-ITEM-1",
         subject: "Bargaining Session #9",
         sender: { emailAddress: "geo@example.org" },
         body: { getAsync: (type, cb) => cb({ status: "succeeded", value: "Session #10 on 2026-09-24 09:00-13:00" }) },
@@ -162,6 +178,15 @@ const driver = `
     document.title = JSON.stringify({ errors: window.__errors, ...snapshot,
       ...afterDuplicate, ...afterPast,
       graphViews: window.__graphViews,
+      graphMessageGets: window.__graphMessageGets,
+      // The duplicate row never posts, so the first POST is the past event and
+      // the second is the "Create anyway" override. Both must carry the link.
+      bodyTypes: window.__graphPosts.map(p => p.body && p.body.contentType),
+      bodiesWithLink: window.__graphPosts
+        .filter(p => p.body && String(p.body.content).includes(EXPECTED_HREF))
+        .length,
+      bodyEscapesSubject: window.__graphPosts.every(
+        p => !String(p.body && p.body.content).includes("<script")),
       postsAfterOverride: window.__graphPosts.length,
       graphPosts: window.__graphPosts.length,
       graphLocations: window.__graphPosts.map(p => p.location ? p.location.displayName : null) });
@@ -200,9 +225,13 @@ const bad =
   result.graphLocations.length !== 2 ||
   result.graphLocations[0] !== "Room 200" ||
   result.graphLocations[1] !== "Room 100" ||
+  result.bodyTypes.join(",") !== "HTML,HTML" ||
+  result.bodiesWithLink !== 2 ||
+  !result.bodyEscapesSubject ||
+  result.graphMessageGets !== 1 ||
   result.upcomingSectionHidden ||
   result.pastSectionHidden ||
   result.upcomingCreateHidden ||
   result.pastCreateHidden;
-console.log(bad ? "\nFAIL" : "\nPASS: duplicate skipped (no POST, override offered), non-matching event still created, \"Create anyway\" posted it, locations carried through, no console errors");
+console.log(bad ? "\nFAIL" : "\nPASS: duplicate skipped (no POST, override offered), non-matching event still created, \"Create anyway\" posted it, locations carried through, both bodies link back to the source email via a single lookup, no console errors");
 process.exit(bad ? 1 : 0);

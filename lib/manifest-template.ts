@@ -5,7 +5,7 @@ export const MANIFEST_TEMPLATE = `<?xml version="1.0" encoding="UTF-8" standalon
   xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
   xsi:type="MailApp">
   <Id>9c2bf2d8-7a3e-4f11-b8d6-2e8f9b4c1a25</Id>
-  <Version>1.5.0.0</Version>
+  <Version>1.6.0.0</Version>
   <ProviderName>Event Extractor</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Event Extractor"/>
@@ -170,6 +170,7 @@ export const MANIFEST_TEMPLATE = `<?xml version="1.0" encoding="UTF-8" standalon
           <Scope>offline_access</Scope>
           <Scope>User.Read</Scope>
           <Scope>Calendars.ReadWrite</Scope>
+          <Scope>Mail.ReadBasic</Scope>
         </Scopes>
       </WebApplicationInfo>
     </VersionOverrides>

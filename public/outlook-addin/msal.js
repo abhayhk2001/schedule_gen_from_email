@@ -9,6 +9,10 @@ const CONFIG_TTL_MS = 5 * 60 * 1000;
 const STORAGE_ACCESS_KEY = "addCalEvent.accessToken";
 const STORAGE_REFRESH_KEY = "addCalEvent.refreshToken";
 const STORAGE_EXPIRES_KEY = "addCalEvent.accessTokenExpiresAt";
+// Records which scopes the cached tokens were granted for. A cached token
+// issued before a scope was added still looks valid but silently lacks the
+// new permission, so a changed fingerprint has to drop it.
+const STORAGE_SCOPES_KEY = "addCalEvent.tokenScopes";
 
 const DIALOG_TIMEOUT_MS = 120_000;
 
@@ -125,6 +129,25 @@ async function redeemAtEntra(config, fields) {
     );
   }
   return data;
+}
+
+function scopeFingerprint(scopes) {
+  return Array.isArray(scopes) ? [...scopes].sort().join(" ") : "";
+}
+
+// Drops cached tokens when the requested scope set no longer matches what they
+// were issued for, so a newly added scope takes effect on the next sign-in
+// instead of whenever the old token happens to expire.
+function discardTokensIfScopesChanged(scopes) {
+  const want = scopeFingerprint(scopes);
+  if (safeLocalGet(STORAGE_SCOPES_KEY) === want) return;
+  if (safeLocalGet(STORAGE_ACCESS_KEY) || safeLocalGet(STORAGE_REFRESH_KEY)) {
+    console.info("[msal] scope set changed; discarding cached tokens");
+  }
+  safeLocalSet(STORAGE_ACCESS_KEY, null);
+  safeLocalSet(STORAGE_REFRESH_KEY, null);
+  safeLocalSet(STORAGE_EXPIRES_KEY, null);
+  safeLocalSet(STORAGE_SCOPES_KEY, want);
 }
 
 function storeTokens(accessToken, refreshToken, expiresInSec) {
@@ -291,6 +314,8 @@ function openAuthDialog(startUrl, onProgress) {
 
 export async function msalLogin(scopes, opts = {}) {
   const progress = typeof opts.onProgress === "function" ? opts.onProgress : () => {};
+
+  discardTokensIfScopesChanged(scopes);
 
   const cached = readCachedAccessToken();
   if (cached) {

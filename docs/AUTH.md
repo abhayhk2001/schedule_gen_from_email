@@ -14,7 +14,7 @@
 
 ## 1. Background — why this was needed
 
-The Outlook add-in creates calendar events via `POST https://graph.microsoft.com/v1.0/me/events`, which requires a Bearer token with `Calendars.ReadWrite`. Microsoft's recommended path for an Office Add-in is:
+The Outlook add-in creates calendar events via `POST https://graph.microsoft.com/v1.0/me/events`, which requires a Bearer token with `Calendars.ReadWrite`. It also reads the source email's `webLink` via `GET /v1.0/me/messages/{restId}?$select=webLink`, which requires `Mail.ReadBasic` — metadata only, no bodies or attachments. Microsoft's recommended path for an Office Add-in is:
 
 ```js
 Office.auth.getAccessToken({ forMSGraphAccess: true })
@@ -133,6 +133,7 @@ Everything the client persists is in `localStorage` (per-origin, survives pane r
 | `addCalEvent.accessTokenExpiresAt` | ~1 h | epoch ms, checked before the access token is used (60 s safety margin) |
 | `addCalEvent.oauth.configCache` | 5 min | `/api/auth-config` response |
 | `addCalEvent.fastLaneBroken` | until cleared | set once `Office.auth.getAccessToken` has failed on this host, so later calls skip the 4 s timeout |
+| `addCalEvent.tokenScopes` | until the scope set changes | fingerprint of the scopes the cached tokens were granted for. When it no longer matches the requested set, the cached access **and** refresh tokens are dropped so a newly added scope takes effect on the next sign-in rather than whenever the old token happens to expire. |
 
 The PKCE verifier and `state` are deliberately **not** in this table. They live in `msal.js` module variables for the duration of a single `msalLogin` call.
 
@@ -191,7 +192,7 @@ The token exchange itself goes **straight from the pane to `https://login.micros
    > may only be redeemed via cross-origin requests.
    > ```
 
-2. **API permissions → Microsoft Graph → Delegated**: `User.Read`, `Calendars.ReadWrite`, `openid`, `offline_access`.
+2. **API permissions → Microsoft Graph → Delegated**: `User.Read`, `Calendars.ReadWrite`, `Mail.ReadBasic`, `openid`, `offline_access`.
 
 3. **Grant admin consent for the tenant** so end-users don't see a permission rationale screen.
 

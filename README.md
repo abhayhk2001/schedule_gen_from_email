@@ -501,7 +501,7 @@ Content-Type: application/json
 
 {
   "subject": "{event_name}",
-  "body": { "contentType": "Text", "content": "{description}" },
+  "body": { "contentType": "HTML", "content": "{description + link to the email}" },
   "start": { "dateTime": "{date}T{time}:00", "timeZone": "{tz}" },
   "end":   { "dateTime": "{end_date}T{end_time}:00", "timeZone": "{tz}" },
   "isAllDay": false
@@ -512,7 +512,7 @@ Content-Type: application/json
 |------------------|:-----------:|------------------------------------------------------------------------------------------------|
 | All day          | true        | `start.dateTime: "{date}"`, `end.dateTime: "{end_date ?? date+1d}"`, `isAllDay: true`           |
 | Timed            | false       | `start.dateTime: "{date}T{time}:00"`, `end.dateTime: "{end_date ?? date}T{end_time ?? time+1h}:00"`, `isAllDay: false` |
-| Both (always)    | —           | `subject: "{event_name}"`, `body.contentType: "Text"`, `body.content: "{description}"`            |
+| Both (always)    | —           | `subject: "{event_name}"`, `body` from `buildEventBody` — HTML with a link back to the email when one could be resolved, otherwise `contentType: "Text"` with the bare description |
 
 ### Duplicate detection
 
@@ -553,7 +553,50 @@ check that cannot run must never block a create: a missed duplicate is merely
 the old behaviour, while a false positive would silently drop an event the user
 asked for.
 
-No extra consent is needed — `Calendars.ReadWrite` already covers the read.
+No extra consent is needed for the duplicate check — `Calendars.ReadWrite`
+already covers the read.
+
+### Linking back to the source email
+
+Every event the add-in creates carries a clickable link to the email it came
+from, so anything the extractor did not capture — the agenda, the registration
+link, the full invite text — stays one click away from the calendar item.
+
+When you click **Extract**, the pane converts the Office item id into a REST id
+while the item is still live:
+
+```js
+Office.context.mailbox.convertToRestId(item.itemId, Office.MailboxEnums.RestVersion.v2_0)
+```
+
+On the first **Create** it resolves that id to the message's official link:
+
+```
+GET https://graph.microsoft.com/v1.0/me/messages/{restId}?$select=webLink
+```
+
+Graph is the authority here rather than a locally built URL: the app uses the
+`/common` authority, so it accepts both work and personal Microsoft accounts,
+and those live on different Outlook hosts. The lookup runs **once per email**,
+not once per event, and only when an event is actually about to be posted — a
+row skipped as a duplicate never pays for it.
+
+The event body then becomes HTML: the description, a rule, and a
+`From email: <subject>` link. Everything interpolated into that HTML — the
+LLM-written description, the subject, the URL — is escaped first, and only
+`http(s)` URLs are allowed in the `href`. The rules live in
+`public/outlook-addin/eventbody.js` as pure functions, unit-tested in
+`tests/eventbody.test.ts`.
+
+**The lookup fails open.** No item id, a failed token, a non-`ok` response, or a
+missing `webLink` all mean the event is still created — just with the plain-text
+body the add-in produced before this feature existed. A missing link is a much
+smaller loss than a failed create.
+
+This needs the **`Mail.ReadBasic`** delegated permission (see
+[Required permission](#required-permission)). It is the least-privileged scope
+that returns `webLink`: message metadata only, explicitly excluding bodies,
+attachments and extended properties.
 
 ### Fallback rules
 
@@ -619,6 +662,8 @@ useless without the verifier.
    **Add permissions**:
    - `User.Read`
    - `Calendars.ReadWrite`
+   - `Mail.ReadBasic` — metadata only, used to resolve the source email's
+     `webLink`. No message bodies or attachments are readable with it.
    - `openid`, `profile`, `offline_access`
    Click **Grant admin consent for &lt;tenant&gt;**.
 5. **Expose an API** (only required if you keep the Office SSO fast lane and

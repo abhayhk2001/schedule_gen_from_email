@@ -3,6 +3,9 @@ export const GRAPH_DEFAULT_SCOPES = [
   "offline_access",
   "User.Read",
   "Calendars.ReadWrite",
+  // Least-privileged scope that returns a message's webLink: metadata only,
+  // no bodies, attachments or extended properties.
+  "Mail.ReadBasic",
 ];
 
 export const REDIRECT_URI =
